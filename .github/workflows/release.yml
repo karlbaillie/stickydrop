@@ -1,0 +1,47 @@
+# Push a tag like v0.2.0 (see `just release`): tests, builds all platforms, publishes a GitHub Release.
+# If the SNAPCRAFT_STORE_CREDENTIALS secret exists, the snap is also uploaded to the Snap Store (stable).
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: extractions/setup-just@v3
+      - if: runner.os == 'Linux'
+        run: sudo snap install snapcraft --classic
+      - run: just ci
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stickydrop-${{ matrix.os }}
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.snap
+            dist/*.dmg
+            dist/*.exe
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - if: env.SNAPCRAFT_STORE_CREDENTIALS != ''
+        run: sudo snap install snapcraft --classic && snapcraft upload --release=stable out/*.snap

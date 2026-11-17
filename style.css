@@ -1,0 +1,115 @@
+:root {
+  --pct: 100%; /* background opacity; notes and chrome mix their colour with transparent by this much */
+  --font: system-ui, sans-serif;
+  --fs: 17px;
+  --bg: #1e1e1e; --chrome: #2a2a2a; --fg: #eee; --muted: #888;
+  --btn: #3a3a3a; --btn-hover: #484848; --border: #555; --panel: #2a2a2a; --accent: #6cb6ff;
+}
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; --bg: #e8e8e8; --chrome: #f6f6f6; --fg: #222; --muted: #777;
+  --btn: #fff; --btn-hover: #ececec; --border: #bbb; --panel: #fff; --accent: #1a6fd6; }
+/* "system" follows the OS; explicit dark/light don't depend on the media query at all */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] { color-scheme: light; --bg: #e8e8e8; --chrome: #f6f6f6; --fg: #222; --muted: #777;
+    --btn: #fff; --btn-hover: #ececec; --border: #bbb; --panel: #fff; --accent: #1a6fd6; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; color: var(--fg);
+  font: 14px system-ui, sans-serif; }
+#app { display: flex; flex-direction: column; height: 100%;
+  background: color-mix(in srgb, var(--bg) var(--pct), transparent); }
+#app.in { animation: drop-top .16s ease-out; }
+body[data-valign="bottom"] #app.in { animation-name: drop-bottom; }
+body.no-anim #app.in { animation: none; }
+@keyframes drop-top { from { transform: translateY(-100%); } }
+@keyframes drop-bottom { from { transform: translateY(100%); } }
+
+button, select { font: inherit; color: inherit; background: var(--btn); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+button:hover { background: var(--btn-hover); }
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+header { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: color-mix(in srgb, var(--chrome) var(--pct), transparent); }
+header[hidden] { display: none; }
+.hint { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+
+#board { flex: 1; display: flex; gap: 12px; padding: 12px; overflow-x: auto; min-height: 0; }
+.note { flex: 1 1 260px; min-width: 260px; display: flex; flex-direction: column; border-radius: 4px;
+  box-shadow: 0 2px 8px #0008; color: #2b2b2b; position: relative; }
+/* the note's colour lives on ::before so ageing can fade/yellow the paper without touching text or badges */
+.note::before { content: ''; position: absolute; inset: 0; background: var(--note-bg); border-radius: inherit;
+  pointer-events: none; z-index: 0; }
+.note > * { position: relative; z-index: 1; }
+body[data-aging="fade"] .note::before { filter: saturate(calc(1 - var(--age, 0) * .8)); opacity: calc(1 - var(--age, 0) * .45); }
+body[data-aging="vintage"] .note::before { filter: sepia(calc(var(--age, 0) * .8)) saturate(calc(1 - var(--age, 0) * .2)) brightness(calc(1 - var(--age, 0) * .12)); }
+body[data-aging="vintage"] .note::after { content: ''; position: absolute; right: 0; bottom: 0; z-index: 0; pointer-events: none;
+  width: calc(var(--age, 0) * 34px); height: calc(var(--age, 0) * 34px); border-top-left-radius: 4px;
+  background: linear-gradient(to top left, color-mix(in srgb, var(--bg) var(--pct), transparent) 50%, #0003 50%); }
+.note-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 0; }
+.note-tools { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.note-tools button[aria-pressed="true"] { color: #1b7f3b; }
+.note-head .due { font-size: 12px; padding: 1px 9px; margin-left: 4px; border: 1px solid #0003; border-radius: 10px; color: #2b2b2bcc; }
+.note-head .due.empty { opacity: 0; }
+.note:hover .due.empty, .note:focus-within .due.empty, .note-head .due.empty:focus-visible { opacity: 1; }
+.note-head .due.quiet { opacity: .6; }
+.note-head .due.overdue { background: #d32f2f; border-color: #d32f2f; color: #fff; }
+.note-head .due.today, .note-head .due.soon { background: #f9a825; border-color: #f9a825; color: #222; }
+.note.overdue { border-left: 4px solid #d32f2f; } /* a real border: ageing filters never touch it */
+.note.done .view { opacity: .55; text-decoration: line-through; }
+.note.done textarea { opacity: .7; }
+.foot { flex: none; padding: 0 12px 6px; font-size: 11px; color: #2b2b2b99; user-select: none; }
+body.no-foot .foot { display: none; }
+.note > .due-pop { position: absolute; top: 30px; left: 6px; z-index: 5; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px #0008; }
+.due-pop input { font: inherit; color: inherit; background: var(--btn); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
+.note-head button { background: transparent; border: 0; color: #2b2b2b99; padding: 0 6px; font-size: 16px; }
+.note-head button:hover { color: #2b2b2b; background: #0001; }
+.note textarea { flex: 1; width: 100%; border: 0; outline: 0; background: transparent; resize: none;
+  padding: 6px 12px 12px; font: var(--fs)/1.45 var(--font); color: #2b2b2b; }
+.note textarea:focus-visible { outline: 0; }
+.note.editing .view, .note:not(.editing) textarea { display: none; }
+.view { flex: 1; min-height: 0; overflow: auto; padding: 6px 12px 12px; font: var(--fs)/1.45 var(--font);
+  cursor: text; overflow-wrap: anywhere; }
+.view:focus-visible { outline: 0; }
+.view > :first-child { margin-top: 0; }
+.view p, .view ul, .view ol, .view pre, .view blockquote { margin: 0 0 .6em; }
+.view h1, .view h2, .view h3, .view h4, .view h5, .view h6 { margin: .3em 0 .35em; line-height: 1.2; }
+.view h1 { font-size: 1.5em; } .view h2 { font-size: 1.3em; } .view h3 { font-size: 1.15em; }
+.view h4, .view h5, .view h6 { font-size: 1em; }
+.view ul, .view ol { padding-left: 1.4em; }
+.view li ul, .view li ol { margin: 0; }
+.view li.task { list-style: none; margin-left: -1.2em; }
+.view li.task input { margin: 0 .3em 0 0; cursor: pointer; }
+.view li.done { opacity: .6; text-decoration: line-through; }
+.view code { font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: .9em; background: #0001;
+  padding: 0 .25em; border-radius: 3px; }
+.view pre { background: #0001; padding: .5em .7em; border-radius: 4px; overflow: auto; }
+.view pre code { background: none; padding: 0; }
+.view blockquote { padding-left: .8em; border-left: 3px solid #0004; }
+.view hr { border: 0; border-top: 1px solid #0004; }
+.view a { color: #1a5fb4; }
+.note:focus-within { box-shadow: 0 0 0 2px var(--accent), 0 2px 8px #0008; }
+
+#toast { z-index: 10; position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+#settings { z-index: 20; position: fixed; inset: 0; background: #000a; display: grid; place-items: center; padding: 8px; }
+#settings[hidden], #toast[hidden] { display: none; }
+/* groups sit side by side on a wide window; the body scrolls when it is still too short, buttons stay put */
+#settings-form { width: min(1000px, 100%); max-height: calc(100vh - 16px); background: var(--panel); border-radius: 10px;
+  padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+#settings-form h2 { margin: 0; font-size: 16px; }
+#settings-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 12px; padding: 2px 4px 2px 0;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); align-items: start; }
+fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0; padding: 6px 12px 10px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+legend { color: var(--muted); padding: 0 6px; }
+fieldset label { display: flex; flex-direction: column; gap: 3px; }
+fieldset label.check { flex-direction: row; align-items: center; gap: 8px; }
+.row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+#hotkey { text-align: left; font-family: ui-monospace, monospace; }
+#hotkey.capturing { border-color: var(--accent); color: var(--accent); }
+#settings-err { margin: 0; min-height: 1em; color: #ff8a80; }

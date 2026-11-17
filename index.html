@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<title>StickyDrop</title>
+<link rel="stylesheet" href="style.css">
+<body>
+<div id="app">
+  <header id="toolbar">
+    <button id="add" title="New note (Ctrl/Cmd+N)">+ Note</button>
+    <span class="hint">Esc hides</span>
+    <span class="spacer"></span>
+    <button id="pin" aria-pressed="false" title="Stay open when you click elsewhere">Pin</button>
+    <button id="gear" title="Settings (Ctrl/Cmd+,)">Settings</button>
+    <button id="close" title="Hide (Esc)">Hide</button>
+  </header>
+  <main id="board"></main>
+  <div id="toast" hidden><span id="toast-msg"></span> <button id="undo">Undo</button></div>
+
+  <div id="settings" hidden>
+    <form id="settings-form">
+      <h2>Settings</h2>
+      <div id="settings-body"></div>
+      <p id="settings-err" role="alert"></p>
+      <div class="row">
+        <button type="button" id="quit">Quit StickyDrop</button>
+        <button type="button" id="reset" title="Restore every setting to its default (notes are kept)">Reset to defaults</button>
+        <span class="spacer"></span>
+        <button type="button" id="settings-close">Done</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="timeutil.js"></script>
+<script src="markdown.js"></script>
+<script src="renderer.js"></script>

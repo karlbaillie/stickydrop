@@ -1,0 +1,73 @@
+{
+  "name": "stickydrop",
+  "version": "0.1.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "test": "node test/time.test.js && node test/e2e.js",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.18.0",
+    "playwright-core": "^1.65.1"
+  },
+  "description": "Guake-style drop-down sticky notes with Markdown, due dates and aging",
+  "author": "StickyDrop contributors",
+  "license": "MIT",
+  "build": {
+    "appId": "com.stickydrop.app",
+    "productName": "StickyDrop",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "markdown.js",
+      "timeutil.js",
+      "style.css",
+      "build/icon.png"
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage",
+        "snap"
+      ],
+      "category": "Utility",
+      "maintainer": "StickyDrop contributors",
+      "syncDesktopName": true
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "snap": {
+      "summary": "Drop-down sticky notes for meetings",
+      "grade": "stable",
+      "confinement": "strict",
+      "plugs": [
+        "default",
+        "home"
+      ]
+    }
+  },
+  "homepage": "https://github.com/karlbaillie/stickydrop#readme",
+  "desktopName": "stickydrop.desktop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karlbaillie/stickydrop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/karlbaillie/stickydrop/issues"
+  }
+}
