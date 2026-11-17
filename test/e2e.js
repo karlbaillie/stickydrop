@@ -122,6 +122,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.locator('.due-pop').getByRole('button', { name: 'Clear' }).click();
   assert.equal(await note1.locator('.due').textContent(), '+ Due');
   assert.equal(await cls(note1, 'overdue'), false);
+  await page.keyboard.press('Escape'); // close the popover: in a short window it covers the note clicked below
 
   // aging is measured from the last edit; overdue stays a separate signal
   const look = () => note1.evaluate((e) => ({ age: e.style.getPropertyValue('--age'), op: getComputedStyle(e, '::before').opacity,

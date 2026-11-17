@@ -136,10 +136,13 @@ function pickDisplay() {
   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint()); // also the fallback if a monitor was unplugged
 }
 
+// below ~120px the settings form can't fit, so small displays get a pixel floor under the % minimum
+const MIN_H = 140;
+const clampH = (a, h) => Math.round(Math.min(a.height, Math.max(MIN_H, h)));
 function place() {
   const a = pickDisplay().workArea;
   const w = Math.round((a.width * S().widthPct) / 100);
-  const h = Math.round((a.height * S().heightPct) / 100);
+  const h = clampH(a, (a.height * S().heightPct) / 100);
   const x = S().halign === 'left' ? a.x : S().halign === 'right' ? a.x + a.width - w : a.x + Math.round((a.width - w) / 2);
   const y = S().valign === 'bottom' ? a.y + a.height - h : a.y;
   win.setBounds({ x, y, width: w, height: h });
@@ -249,7 +252,7 @@ ipcMain.on('save-columns', (_e, cols) => { data.columns = cleanColumns(cols); sc
 ipcMain.handle('resize-height', (_e, px, commit) => {
   if (!Number.isFinite(px)) return { settings: S() };
   const a = pickDisplay().workArea;
-  const h = Math.round(Math.min(a.height, Math.max(a.height * SCHEMA.heightPct.min / 100, px)));
+  const h = clampH(a, Math.max(a.height * SCHEMA.heightPct.min / 100, px));
   win.setBounds({ ...win.getBounds(), height: h, y: S().valign === 'bottom' ? a.y + a.height - h : a.y });
   return commit ? applySettings({ heightPct: Math.round(h / a.height * 100) }) : { settings: S() };
 });
