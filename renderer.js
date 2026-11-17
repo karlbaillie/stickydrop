@@ -2,14 +2,20 @@ const $ = (id) => document.getElementById(id);
 const board = $('board');
 
 let notes = [];
+let columns = [];
+let dragging = null;
+let draggingCol = null;
+const COL_COLORS = ['#e57373', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8'];
 let settings = {};
 let meta = {}; // schema, palettes, fonts from main
 let lastFocus = 0;
 let toastTimer;
-let mdState;
+let viewKey; // what the notes were last drawn for: Markdown on/off + layout
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const save = () => api.saveNotes(notes);
+const viewNow = () => settings.markdown + settings.layout;
+const colOf = (n) => columns.find((c) => c.id === n.col) || columns[0];
 const colors = () => meta.palettes[settings.palette];
 const paint = (el, n) => { el.style.setProperty('--note-bg', `color-mix(in srgb, ${colors()[n.color % colors().length]} var(--pct), transparent)`); };
 const newNote = () => { const t = Date.now(); return { id: uid(), text: '', color: notes.length % 5, created: t, updated: t }; };
@@ -36,24 +42,26 @@ function applyStyle() {
   document.body.dataset.valign = settings.valign;
   document.body.classList.toggle('no-anim', !settings.animate);
   $('toolbar').hidden = !settings.showToolbar;
-  if (mdState !== settings.markdown) render(); // markdown toggled: redraw notes (no focus change)
+  if (viewKey !== viewNow()) render(); // markdown or layout toggled: redraw notes (no focus change)
   document.body.dataset.aging = settings.aging;
   document.body.classList.toggle('no-foot', !settings.showAge);
-  board.querySelectorAll('.note').forEach((el, i) => paint(el, notes[i]));
+  board.querySelectorAll('.note').forEach((el) => paint(el, el.note));
   refreshAll();
 }
 
 // ---- notes -----------------------------------------------------------------
 function render(focusIdx) {
-  mdState = settings.markdown;
+  viewKey = viewNow();
   closePop();
-  board.replaceChildren(...notes.map(noteEl));
+  const boardMode = settings.layout === 'board';
+  board.classList.toggle('cols', boardMode);
+  board.replaceChildren(...(boardMode ? columns.map(colEl) : notes.map((n) => noteEl(n, notes.indexOf(n)))), ...(boardMode && columns.length < 8 ? [addColBtn()] : []));
   if (focusIdx != null) focusNote(focusIdx);
 }
 
 // a rendered note's textarea is display:none, so switch it to editing before focusing
 function focusNote(i) {
-  const el = board.children[Math.min(i, board.children.length - 1)];
+  const el = [...board.querySelectorAll('.note')].find((e) => e.note === notes[i]) || board.querySelector('.note');
   if (!el) return;
   el.classList.add('editing');
   const ta = el.querySelector('textarea');
@@ -65,6 +73,7 @@ function focusNote(i) {
 function noteEl(n, i) {
   const el = document.createElement('section');
   el.className = 'note';
+  el.note = n;
   paint(el, n);
 
   const head = document.createElement('div');
@@ -79,8 +88,12 @@ function noteEl(n, i) {
   const doneBtn = btn('✓', 'Mark done', () => {
     n.done = !n.done;
     touch(n);
+    if (settings.layout === 'board') { // done means "in the done column"
+      const target = n.done ? columns.find((c) => c.done) : colOf(n).done && columns[0];
+      if (target) return moveNote(n, target.id);
+    }
     save();
-    if (n.done && settings.doneSink) { // optionally park finished notes at the end
+    if (n.done && settings.doneSink && settings.layout === 'row') { // optionally park finished notes at the end
       notes.push(notes.splice(notes.indexOf(n), 1)[0]);
       render();
     } else el.refresh();
@@ -94,6 +107,17 @@ function noteEl(n, i) {
   });
   tools.append(color, doneBtn, dueBtn);
   head.append(tools, btn('×', 'Delete note', () => removeNote(n)));
+  if (settings.layout === 'board') { // the header is the drag handle, so text selection in the note still works
+    head.draggable = true;
+    head.ondragstart = (e) => {
+      dragging = n;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', n.id);
+      e.dataTransfer.setDragImage(el, 20, 10);
+      setTimeout(() => el.classList.add('dragging'));
+    };
+    head.ondragend = () => { dragging = null; el.classList.remove('dragging'); clearDrop(); };
+  }
 
   const foot = document.createElement('div');
   foot.className = 'foot';
@@ -186,12 +210,171 @@ function duePop(n, el) {
   return pop;
 }
 document.addEventListener('pointerdown', (e) => {
-  if (openPop && !openPop.contains(e.target) && !e.target.closest('.due')) closePop();
+  if (openPop && !openPop.contains(e.target) && !e.target.closest('.due, .col-menu-btn')) closePop();
 });
 setInterval(refreshAll, 30000); // due states and ages move with the clock
 
-function addNote() {
-  notes.push(newNote());
+// ---- kanban board ----------------------------------------------------------
+const saveCols = () => api.saveColumns(columns);
+const clearDrop = () => board.querySelectorAll('.drop-before, .drop-end, .drop-col-before, .drop-col-after').forEach((x) => x.classList.remove('drop-before', 'drop-end', 'drop-col-before', 'drop-col-after'));
+
+// put n in column colId before note `before` (or at the end of that column); the done column marks it done
+function moveNote(n, colId, before, keepFocus) {
+  const col = columns.find((c) => c.id === colId);
+  if (!col) return;
+  if (col.collapsed) { delete col.collapsed; saveCols(); } // don't drop a note into a hidden column
+  const from = colOf(n);
+  notes.splice(notes.indexOf(n), 1);
+  const at = before && before !== n ? notes.indexOf(before) : -1;
+  if (at >= 0) notes.splice(at, 0, n);
+  else {
+    const last = notes.findLastIndex((m) => colOf(m) === col);
+    notes.splice(last < 0 ? notes.length : last + 1, 0, n);
+  }
+  n.col = col.id;
+  if (col.done) n.done = true; else if (from.done) n.done = false;
+  save();
+  render(keepFocus ? notes.indexOf(n) : undefined);
+}
+
+function renameCol(c, nameBtn) {
+  if (c.collapsed) { delete c.collapsed; saveCols(); return render(); }
+  const head = nameBtn.parentNode;
+  const input = el('input', { value: c.name, maxLength: 30, className: 'col-name', ariaLabel: 'Column name' });
+  let finished = false;
+  const finish = (ok) => {
+    if (finished) return;
+    finished = true;
+    const v = input.value.trim();
+    if (ok && v && v !== c.name) { c.name = v; saveCols(); }
+    nameBtn.textContent = c.name;
+    head.draggable = true;
+    input.replaceWith(nameBtn);
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') { e.stopPropagation(); finish(false); } // Esc cancels the rename, not the window
+  };
+  input.onblur = () => finish(true);
+  head.draggable = false; // else dragging inside the input would drag the column
+  nameBtn.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function colMenu(c, col) {
+  const swatch = (i) => {
+    const b = btn(i < 0 ? '∅' : '', i < 0 ? 'No colour' : `Colour ${i + 1}`, () => {
+      if (i < 0) delete c.color; else c.color = i;
+      saveCols();
+      paintCol(c, col);
+    });
+    b.className = 'swatch';
+    if (i >= 0) b.style.background = COL_COLORS[i];
+    return b;
+  };
+  const limit = el('input', { type: 'number', min: 1, max: 99, value: c.limit ?? '', placeholder: 'none', ariaLabel: 'Note limit' });
+  limit.onchange = () => {
+    const v = Math.floor(+limit.value);
+    if (v >= 1 && v <= 99) c.limit = v; else delete c.limit;
+    saveCols();
+    render();
+  };
+  const menu = el('div', { className: 'due-pop col-menu' },
+    el('div', { className: 'row' }, ...[-1, 0, 1, 2, 3, 4, 5].map(swatch)),
+    el('label', { className: 'row' }, 'Warn above ', limit, ' notes'));
+  if (columns.length > 1) menu.append(btn('Delete column', 'Its notes move to the first column', () => {
+    columns.splice(columns.indexOf(c), 1);
+    for (const n of notes) if (n.col === c.id) n.col = columns[0].id;
+    saveCols();
+    save();
+    render();
+  }));
+  menu.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePop(); } };
+  return menu;
+}
+
+function paintCol(c, col) {
+  if (c.color == null) col.style.removeProperty('--col-accent'); else col.style.setProperty('--col-accent', COL_COLORS[c.color]);
+  col.classList.toggle('colored', c.color != null);
+}
+
+function colEl(c) {
+  const mine = notes.filter((n) => colOf(n) === c);
+  const nameBtn = btn(c.name, 'Rename column', () => renameCol(c, nameBtn));
+  nameBtn.className = 'col-name';
+  const fold = btn(c.collapsed ? '▸' : '▾', c.collapsed ? 'Expand column' : 'Collapse column', () => {
+    if (c.collapsed) delete c.collapsed; else c.collapsed = true;
+    saveCols();
+    render();
+  });
+  fold.className = 'fold';
+  const count = el('span', { className: 'count', textContent: c.limit ? `${mine.length}/${c.limit}` : String(mine.length) });
+  const menuBtn = btn('⋮', 'Column options: colour, note limit, delete', () => {
+    if (openPop && openPop.parentNode === col) return closePop();
+    closePop();
+    openPop = colMenu(c, col);
+    col.append(openPop);
+  });
+  menuBtn.className = 'col-menu-btn';
+  const head = el('div', { className: 'col-head', draggable: true }, fold, nameBtn, count, el('span', { className: 'spacer' }),
+    btn('+', `Add note to ${c.name}`, () => addNote(c.id)), menuBtn);
+  const col = el('section', { className: 'col' }, head, ...mine.map((n) => noteEl(n, notes.indexOf(n))));
+  col.setAttribute('aria-label', c.name);
+  col.classList.toggle('collapsed', !!c.collapsed);
+  col.classList.toggle('over-limit', !!c.limit && mine.length > c.limit); // a soft warning, never blocks
+  paintCol(c, col);
+
+  head.ondragstart = (e) => { // reorder columns by dragging their header
+    draggingCol = c;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', c.id);
+    e.dataTransfer.setDragImage(col, 20, 10);
+  };
+  head.ondragend = () => { draggingCol = null; clearDrop(); };
+  const spot = (e) => [...col.querySelectorAll('.note:not(.dragging)')].find((x) => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+  const after = (e) => { const r = col.getBoundingClientRect(); return e.clientX > r.left + r.width / 2; };
+  col.ondragover = (e) => {
+    if (!dragging && !draggingCol) return;
+    e.preventDefault();
+    clearDrop();
+    if (draggingCol) { if (draggingCol !== c) col.classList.add(after(e) ? 'drop-col-after' : 'drop-col-before'); return; }
+    const before = spot(e);
+    (before || col).classList.add(before ? 'drop-before' : 'drop-end');
+  };
+  col.ondrop = (e) => {
+    if (draggingCol) {
+      e.preventDefault();
+      const moved = draggingCol;
+      const right = after(e);
+      draggingCol = null;
+      if (moved === c) return;
+      columns.splice(columns.indexOf(moved), 1);
+      columns.splice(columns.indexOf(c) + (right ? 1 : 0), 0, moved);
+      saveCols();
+      return render();
+    }
+    if (!dragging) return;
+    e.preventDefault();
+    const n = dragging;
+    dragging = null;
+    moveNote(n, c.id, spot(e)?.note);
+  };
+  return col;
+}
+
+function addColBtn() {
+  return btn('+ Column', 'Add a column', () => {
+    columns.push({ id: uid(), name: 'New column' });
+    saveCols();
+    render();
+    const names = board.querySelectorAll('.col-name');
+    names[names.length - 1].click(); // straight into naming it
+  });
+}
+
+function addNote(colId) {
+  notes.push(colId ? { ...newNote(), col: colId } : newNote());
   save();
   render(notes.length - 1);
 }
@@ -333,7 +516,26 @@ $('quit').onclick = () => api.quit();
 $('settings-form').onsubmit = (e) => e.preventDefault();
 
 // ---- chrome ----------------------------------------------------------------
-$('add').onclick = addNote;
+// drag the edge grip to resize; the new height is remembered (pointer capture keeps the drag alive off-window)
+$('grip').onpointerdown = (e) => {
+  const grip = e.currentTarget;
+  const sign = settings.valign === 'bottom' ? -1 : 1; // the grip is on the edge away from the screen edge
+  const y0 = e.screenY, h0 = window.innerHeight;
+  let h = h0, queued = false;
+  grip.setPointerCapture(e.pointerId);
+  grip.onpointermove = (m) => {
+    h = h0 + sign * (m.screenY - y0);
+    if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; api.resizeHeight(h, false); }); }
+  };
+  grip.onpointerup = async () => {
+    grip.onpointermove = grip.onpointerup = null;
+    const r = await api.resizeHeight(h, true);
+    settings = r.settings;
+    syncControls();
+  };
+};
+$('grip').ondblclick = () => apply({ heightPct: meta.schema.heightPct.def });
+$('add').onclick = () => addNote();
 $('gear').onclick = openSettings;
 $('close').onclick = () => api.hide();
 $('pin').onclick = (e) => {
@@ -348,6 +550,19 @@ document.addEventListener('keydown', (e) => {
     if (!$('settings').hidden) $('settings').hidden = true;
     else api.hide();
   } else if (mod && e.key === 'n') { e.preventDefault(); addNote(); }
+  else if (e.altKey && e.key.startsWith('Arrow') && settings.layout === 'board') { // move the focused note
+    const n = document.activeElement.closest?.('.note')?.note;
+    if (!n) return;
+    e.preventDefault();
+    const col = columns.indexOf(colOf(n));
+    const mine = notes.filter((m) => colOf(m) === colOf(n));
+    const pos = mine.indexOf(n);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const to = columns[col + (e.key === 'ArrowLeft' ? -1 : 1)];
+      if (to) moveNote(n, to.id, null, true);
+    } else if (e.key === 'ArrowUp' && pos > 0) moveNote(n, colOf(n).id, mine[pos - 1], true);
+    else if (e.key === 'ArrowDown' && pos < mine.length - 1) moveNote(n, colOf(n).id, mine[pos + 2], true);
+  }
   else if (mod && e.key === ',') { e.preventDefault(); openSettings(); }
 });
 
@@ -362,7 +577,7 @@ api.onShow(() => {
 
 (async () => {
   const d = await api.load();
-  ({ settings, notes } = d);
+  ({ settings, notes, columns } = d);
   meta = d;
   // older versions stored a hex colour; now an index into the chosen palette
   const classic = d.palettes.classic;

@@ -28,6 +28,7 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 **Drop-down behaviour (the Guake part)**
 - Global hotkey toggles the window: `F9` by default (`Ctrl+Alt+N` on macOS, where F9 is a system key); change it in Settings.
 - Opens on the display under your mouse (or the primary / a specific display), full width or any size from 20% of the screen.
+- **Drag the grip bar on the window's inner edge** to resize it on the fly (double-click it to reset); the height is remembered.
 - Drops from the top or the bottom, aligned left, centre or right, with an optional slide animation.
 - Hides when focus is lost, so clicking back into your meeting dismisses it. **Pin** keeps it open.
 - If it is open but unfocused, the hotkey *refocuses* it instead of hiding it (as Guake's "refocus" option does).
@@ -47,6 +48,13 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 - A ✓ toggle marks a note done: dimmed and struck through, never flagged overdue. Optionally it moves to the end.
 - The tray menu summarises what is overdue or due today ("2 overdue, 1 due today") and lists those notes.
 
+**Kanban board (optional)**
+- Settings → Notes → **Layout: Kanban board** turns the row of notes into columns. It is the same notes, so you can switch back and forth freely; the default stays a plain row.
+- Starts with *To do / Doing / Done*. Click a column name to rename it, **+ Column** adds one (up to 8), **×** deletes one (its notes move to the first column), **+** adds a note to that column.
+- Drag a note by its header to move it between or within columns, or use `Alt+←/→` (change column) and `Alt+↑/↓` (reorder) on the focused note.
+- Each column's **⋮** menu sets a colour, an optional note limit (a soft warning: the count turns red, nothing is blocked) and delete. **▾** collapses a column to a thin strip. Drag a column header to reorder columns.
+- Moving a note into the done column marks it done, moving it out clears that; the ✓ button does the same move. Moving is not an edit, so it doesn't reset aging.
+
 **Aging**
 - Notes visually age with the time since their *last edit*: **Fade** (the paper washes out) or **Vintage**
   (it yellows and a corner curls). Editing a note, ticking a task or changing its due date rejuvenates it.
@@ -64,6 +72,10 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 |---|---|
 | ![Light theme, Pastel palette, Vintage aging](docs/light.png) | ![Due date popover](docs/due.png) |
 | **Light theme, Pastel palette, Vintage aging.** The old note yellows and curls; the done note is struck through; overdue stays red. | **Due date popover**: quick picks plus an exact date and optional time. |
+
+![Kanban board layout with To do, Doing and Done columns](docs/board.png)
+
+*Kanban board layout: coloured columns, here with a note limit of 1 exceeded in To do.*
 
 ![Settings panel](docs/settings.png)
 
@@ -106,6 +118,7 @@ Notes:
 | `Ctrl/Cmd+N` | New note |
 | `Ctrl/Cmd+,` | Settings |
 | `Esc` | Close the due popover or settings if open, otherwise hide the window |
+| `Alt+←/→` / `Alt+↑/↓` | Board layout: move the focused note to another column / reorder it |
 | `Tab` | Move between notes and their controls |
 | Click a rendered note | Edit it; it re-renders when focus leaves |
 
@@ -131,10 +144,11 @@ stickydrop             # a second launch simply shows the window
 | General | Stay on top | on | |
 | General | Show tray icon | on | |
 | General | Launch at login | off | Linux: `~/.config/autostart`; macOS/Windows: login items |
-| Window | Width / Height | 100% / 40% | 20–100% / 15–100% of the display's work area |
+| Window | Width / Height | 100% / 40% | 20–100% / 15–100% of the display's work area; height is also set by dragging the window edge |
 | Window | Horizontal position | Center | Left, center or right (when narrower than 100%) |
 | Window | Drops from | Top | Top or bottom |
 | Notes | Render Markdown when not editing | on | Off = plain text boxes |
+| Notes | Layout | Row of notes | Row or Kanban board; columns, colours and limits are kept in your data, not reset |
 | Notes | Aging | Fade | Off, Fade, or Vintage |
 | Notes | Fully aged after | 14 days | 1–60 |
 | Notes | Show created / edited time | on | |
@@ -182,9 +196,10 @@ Starting the command also launches the app if it isn't running, so the shortcut 
 ```json
 {
   "settings": { "hotkey": "F9", "theme": "dark", "heightPct": 40, "...": "..." },
+  "columns": [{ "id": "todo", "name": "To do", "color": 4, "limit": 3 }, { "id": "done", "name": "Done", "done": true }],
   "notes": [
     { "id": "k3j9x2ab", "text": "# Standup\n- [ ] send notes", "color": 0,
-      "created": 1731571200000, "updated": 1731574800000, "due": "2026-11-14T17:00", "done": false }
+      "created": 1731571200000, "updated": 1731574800000, "due": "2026-11-14T17:00", "done": false, "col": "todo" }
   ]
 }
 ```
@@ -232,8 +247,9 @@ just dist          # build installers for this OS
 - **Opacity below 100%** relies on the compositor honouring a transparent window. It is set and applied, but I haven't
   seen it blend with a desktop on any platform yet.
 - **Wayland**: the in-app global hotkey is unreliable; use the `--toggle` system shortcut (above).
+- **Touch screens**: board drag and drop is untested on touch hardware; use `Alt+Arrows` or the ✓ button there.
 - **Markdown** has no tables, images or raw HTML (HTML is shown as text).
-- **One set of notes**: no tabs/boards, search, labels, archive, reminders or sync yet. See [ROADMAP.md](ROADMAP.md).
+- **One set of notes**: no separate boards or tabs, search, labels, archive, reminders or sync yet. See [ROADMAP.md](ROADMAP.md).
 - Notes that predate the date features were treated as created and edited at first launch after the upgrade.
 
 ## License

@@ -12,8 +12,8 @@ Every one of these needs only small additions to the note data (`labels`, `archi
 | 6 | **Recurring notes** | Daily/weekly/monthly. Marking a recurring note done rolls its due date forward. Needs due dates and done. | S–M |
 | 7 | **Labels** | Named coloured tags (Action, Question, Decision...) with a filter. Note colour alone is only a rename of the 5 palette slots. | M |
 | 8 | **Archive** | Delete becomes archive, with an archive view to restore or delete for good. Today a deleted note is gone after the 6 s undo. | M |
-| 9 | **Reorder and sort** | Drag notes to reorder; sort by due date / age / colour. | M |
-| 10 | **Tabs ("boards")** | Separate note sets, e.g. one per meeting or "Personal". Closest to Guake's tabs, short of full Kanban. | M |
+| 9 | **Sort** | Sort by due date / age / colour. Drag-to-reorder now exists in the board layout. | S |
+| 10 | **Tabs (separate boards)** | Separate note sets, e.g. one per meeting or "Personal". Closest to Guake's tabs, short of full Kanban. | M |
 | 11 | **Search and filter** | `Ctrl+F` across notes; quick filters: overdue, due today, has label. | S–M |
 | 12 | **Checklist progress** | "2/5" badge from the `- [ ]` tasks already in a note. | S |
 | 13 | **Templates** | New note from a template, e.g. Agenda / Actions / Decisions skeleton. | S |
@@ -30,6 +30,9 @@ Every one of these needs only small additions to the note data (`labels`, `archi
 | # | Feature | Effort |
 |---|---|---|
 | 18 | **Insert timestamp** shortcut (e.g. `Ctrl+;` types `[14:32]`) to stamp points in a call | S |
+
+## Kanban extras (not built)
+Per-column sort and touch-friendly drag (a pointer-event drag instead of HTML5 drag; needs a touch screen to build and test).
 
 ## Left out on purpose
 Assignees, comments, watch, votes, stickers and Butler-style automation: they need other people or don't fit a single-user drop-down.

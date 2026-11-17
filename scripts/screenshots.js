@@ -23,9 +23,9 @@ const base = {
     text: 'still typing...\n- [ ] edit mode shows raw Markdown' },
 };
 
-async function shoot(name, notes, settings, act) {
+async function shoot(name, notes, settings, act, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-shots-'));
-  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ settings, notes }));
+  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ settings, notes, ...extra }));
   const app = await electron.launch({
     args: [path.join(__dirname, '..'), '--no-sandbox'],
     env: { ...process.env, STICKYDROP_DATA: dir, STICKYDROP_SHOW: '1' },
@@ -48,6 +48,9 @@ async function shoot(name, notes, settings, act) {
   await shoot('due', [base.a, base.b, base.c, base.d], dark, async (page) => {
     await page.locator('.note').first().locator('.due').click();
   });
+  await shoot('board', [base.a, { ...base.b, col: 'doing' }, { ...base.c, col: 'doing' }, { ...base.d, col: 'done' }, { ...base.e, col: 'todo' }],
+    { heightPct: 55, widthPct: 100, layout: 'board' }, null, {
+      columns: [{ id: 'todo', name: 'To do', color: 4, limit: 1 }, { id: 'doing', name: 'Doing', color: 1 }, { id: 'done', name: 'Done', done: true, color: 3 }] });
   await shoot('settings', [base.a, base.b, base.c, base.d], { heightPct: 85 }, (page) => page.evaluate(() => openSettings()));
   console.log('wrote docs/*.png');
 })().catch((e) => { console.error(e); process.exit(1); });

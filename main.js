@@ -41,13 +41,14 @@ const SCHEMA = {
   showTray:      { group: 'General', label: 'Show tray icon', type: 'check', def: true },
   launchAtLogin: { group: 'General', label: 'Launch at login', type: 'check', def: false },
   widthPct:      { group: 'Window', label: 'Width', type: 'range', min: 20, max: 100, step: 5, unit: '%', def: 100 },
-  heightPct:     { group: 'Window', label: 'Height', type: 'range', min: 15, max: 100, step: 5, unit: '%', def: 40 },
+  heightPct:     { group: 'Window', label: 'Height (or drag the window edge)', type: 'range', min: 15, max: 100, step: 1, unit: '%', def: 40 },
   halign:        { group: 'Window', label: 'Horizontal position', type: 'select', options: { left: 'Left', center: 'Center', right: 'Right' }, def: 'center' },
   valign:        { group: 'Window', label: 'Drops from', type: 'select', options: { top: 'Top', bottom: 'Bottom' }, def: 'top' },
   markdown:      { group: 'Notes', label: 'Render Markdown when not editing', type: 'check', def: true },
   aging:         { group: 'Notes', label: 'Aging (from last edit)', type: 'select', options: { off: 'Off', fade: 'Fade (washes out)', vintage: 'Vintage (yellows, corner curls)' }, def: 'fade' },
   agingDays:     { group: 'Notes', label: 'Fully aged after', type: 'range', min: 1, max: 60, step: 1, unit: ' days', def: 14 },
   showAge:       { group: 'Notes', label: 'Show created / edited time', type: 'check', def: true },
+  layout:        { group: 'Notes', label: 'Layout', type: 'select', options: { row: 'Row of notes', board: 'Kanban board (columns)' }, def: 'row' },
   doneSink:      { group: 'Notes', label: 'Move notes to the end when marked done', type: 'check', def: false },
   theme:         { group: 'Appearance', label: 'Theme', type: 'select', options: { system: 'Follow system', dark: 'Dark', light: 'Light' }, def: 'dark' },
   opacity:       { group: 'Appearance', label: 'Background opacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', def: 100 },
@@ -76,7 +77,26 @@ function coerce(spec, v) {
 
 // ---- state -----------------------------------------------------------------
 const FILE = () => path.join(app.getPath('userData'), 'data.json');
-let data = { settings: { ...DEFAULTS }, notes: [] };
+const DEFAULT_COLUMNS = () => [{ id: 'todo', name: 'To do' }, { id: 'doing', name: 'Doing' }, { id: 'done', name: 'Done', done: true }];
+// 1-8 columns with unique string ids and non-empty names, else the defaults
+function cleanColumns(c) {
+  if (!Array.isArray(c) || !c.length || c.length > 8) return DEFAULT_COLUMNS();
+  const ids = new Set();
+  const out = [];
+  for (const x of c) {
+    const name = typeof x?.name === 'string' ? x.name.trim().slice(0, 30) : '';
+    if (!name || typeof x.id !== 'string' || !x.id || ids.has(x.id)) return DEFAULT_COLUMNS();
+    ids.add(x.id);
+    const col = { id: x.id, name };
+    if (x.done) col.done = true;
+    if (x.collapsed) col.collapsed = true;
+    if (Number.isInteger(x.color) && x.color >= 0 && x.color < 6) col.color = x.color;
+    if (Number.isInteger(x.limit) && x.limit >= 1 && x.limit <= 99) col.limit = x.limit;
+    out.push(col);
+  }
+  return out;
+}
+let data = { settings: { ...DEFAULTS }, notes: [], columns: DEFAULT_COLUMNS() };
 let win, tray, pinned = false, quitting = false, saveTimer, trayTimer;
 const S = () => data.settings;
 
@@ -85,7 +105,7 @@ function load() {
   try { raw = fs.readFileSync(FILE(), 'utf8'); } catch { return; } // first run
   try {
     const d = JSON.parse(raw);
-    data = { settings: { ...DEFAULTS, ...d.settings }, notes: Array.isArray(d.notes) ? d.notes : [] };
+    data = { settings: { ...DEFAULTS, ...d.settings }, notes: Array.isArray(d.notes) ? d.notes : [], columns: cleanColumns(d.columns) };
     for (const [k, spec] of Object.entries(SCHEMA)) { // drop stale/invalid saved values
       if (k !== 'display' && coerce(spec, S()[k]) === undefined) S()[k] = spec.def;
     }
@@ -211,6 +231,7 @@ const resolvedSchema = () => Object.fromEntries(Object.entries(SCHEMA).map(([k, 
 ipcMain.handle('load', () => ({
   settings: data.settings,
   notes: data.notes,
+  columns: data.columns,
   schema: resolvedSchema(),
   palettes: Object.fromEntries(Object.entries(PALETTES).map(([k, v]) => [k, v.colors])),
   fonts: Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.css])),
@@ -221,6 +242,15 @@ ipcMain.on('save-notes', (_e, notes) => {
   scheduleSave();
   clearTimeout(trayTimer);
   trayTimer = setTimeout(buildTray, 1000); // keep the tray's due summary current
+});
+ipcMain.on('save-columns', (_e, cols) => { data.columns = cleanColumns(cols); scheduleSave(); });
+// drag-to-resize from the renderer's edge grip: live while dragging, saved (as a % of the work area) on release
+ipcMain.handle('resize-height', (_e, px, commit) => {
+  if (!Number.isFinite(px)) return { settings: S() };
+  const a = pickDisplay().workArea;
+  const h = Math.round(Math.min(a.height, Math.max(a.height * SCHEMA.heightPct.min / 100, px)));
+  win.setBounds({ ...win.getBounds(), height: h, y: S().valign === 'bottom' ? a.y + a.height - h : a.y });
+  return commit ? applySettings({ heightPct: Math.round(h / a.height * 100) }) : { settings: S() };
 });
 ipcMain.on('pinned', (_e, v) => { pinned = !!v; });
 ipcMain.on('hide', () => win.hide());

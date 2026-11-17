@@ -299,5 +299,123 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert(fs.readdirSync(dir).some((f) => f.includes('corrupt')), 'corrupt file preserved');
   await app.close();
 
+  // ---- kanban board ----
+  app = await launch();
+  page = await app.firstWindow();
+  await page.waitForSelector('textarea');
+  const setLayout = (v) => page.evaluate((l) => apply({ layout: l }), v);
+  const colNames = () => page.locator('.col .col-name').allTextContents();
+  const inCol = (i) => page.locator('.col').nth(i).locator('textarea').evaluateAll((t) => t.map((x) => x.value));
+  await page.locator('textarea').first().fill('A');
+  await page.keyboard.press('Control+n'); await page.keyboard.type('B');
+  await page.keyboard.press('Control+n'); await page.keyboard.type('C');
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('.col').count(), 0, 'row layout has no columns');
+  await setLayout('board');
+  assert.deepEqual(await colNames(), ['To do', 'Doing', 'Done']);
+  assert.deepEqual(await inCol(0), ['A', 'B', 'C'], 'notes without a column start in the first');
+
+  // drag B (second) to Doing, then C (now second) into Done (marks it done)
+  await page.locator('.col').nth(0).locator('.note').nth(1).locator('.note-head').dragTo(page.locator('.col').nth(1));
+  assert.deepEqual(await inCol(1), ['B']);
+  await page.locator('.col').nth(0).locator('.note').nth(1).locator('.note-head').dragTo(page.locator('.col').nth(2));
+  assert.deepEqual(await inCol(2), ['C']);
+  assert(await page.locator('.col').nth(2).locator('.note.done').count() === 1, 'dropping into Done marks it done');
+
+  // keyboard: Alt+Left moves C back out of Done (clears done); Alt+Up reorders
+  await page.locator('.col').nth(2).locator('.note-head').click();
+  await page.locator('.col').nth(2).locator('.view, textarea').first().click();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await page.waitForTimeout(100);
+  assert.deepEqual(await inCol(1), ['B', 'C'], 'Alt+Left moves to the previous column');
+  assert.equal(await page.locator('.note.done').count(), 0, 'leaving Done clears done');
+  await page.keyboard.press('Alt+ArrowUp');
+  assert.deepEqual(await inCol(1), ['C', 'B'], 'Alt+Up reorders within the column');
+
+  // ✓ in board mode moves to Done
+  await page.locator('.col').nth(1).locator('.note').first().locator('button[title="Mark done"]').click();
+  assert.deepEqual(await inCol(2), ['C']);
+
+  // rename, add, delete columns
+  await page.locator('.col-name').first().click();
+  await page.keyboard.type('Backlog'); await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '+ Column' }).click();
+  await page.keyboard.type('Review'); await page.keyboard.press('Enter');
+  assert.deepEqual(await colNames(), ['Backlog', 'Doing', 'Done', 'Review']);
+  await page.waitForTimeout(500);
+  assert.deepEqual(readData().columns.map((c) => c.name), ['Backlog', 'Doing', 'Done', 'Review']);
+  await page.locator('.col').nth(1).locator('.col-menu-btn').click();
+  await page.getByRole('button', { name: 'Delete column' }).click();
+  assert.deepEqual(await colNames(), ['Backlog', 'Done', 'Review']);
+  assert.deepEqual(await inCol(0), ['A', 'B'], 'deleted column notes go to the first column');
+
+  // column colour, soft note limit, collapse, reorder by dragging the header
+  const menu = (i) => page.locator('.col').nth(i).locator('.col-menu-btn').click();
+  await menu(1);
+  await page.locator('.col-menu .swatch').nth(4).click();
+  assert(await page.locator('.col').nth(1).evaluate((x) => x.classList.contains('colored') && x.style.getPropertyValue('--col-accent') !== ''), 'colour applies');
+  await menu(0);
+  await page.locator('.col-menu input[type=number]').fill('1');
+  await page.keyboard.press('Tab'); // the change event re-renders and closes the menu
+  assert(await page.locator('.col').nth(0).evaluate((x) => x.classList.contains('over-limit')), '2 notes over a limit of 1 warns');
+  assert.equal(await page.locator('.col').nth(0).locator('.count').textContent(), '2/1');
+  assert.equal(await page.locator('.col').nth(0).locator('.note').count(), 2, 'limit never blocks');
+  await page.locator('.col').nth(1).locator('.fold').click();
+  assert(await page.locator('.col').nth(1).evaluate((x) => x.classList.contains('collapsed') && x.querySelector('.note').offsetParent === null), 'collapsed hides notes');
+  const review = page.locator('.col').nth(2);
+  const box = await review.boundingBox();
+  await page.locator('.col').nth(1).locator('.col-head').dragTo(review, { targetPosition: { x: box.width - 5, y: 100 } });
+  assert.deepEqual(await colNames(), ['Backlog', 'Review', 'Done'], 'columns reordered by dragging');
+  await page.waitForTimeout(500);
+  const saved = readData().columns;
+  assert.deepEqual(saved.map((c) => c.name), ['Backlog', 'Review', 'Done']);
+  assert.equal(saved[2].collapsed, true);
+  assert.equal(saved[2].color, 3); // swatch 0 is "no colour"
+  assert.equal(saved[0].limit, 1);
+
+  // persists across restart; switching to Row keeps every note; reset keeps columns and notes
+  await page.waitForTimeout(500);
+  await app.close();
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('.col');
+  assert.deepEqual(await colNames(), ['Backlog', 'Review', 'Done']);
+  await setLayout('row');
+  assert.deepEqual(await page.locator('textarea').evaluateAll((t) => t.map((x) => x.value)).then((v) => v.sort()), ['A', 'B', 'C']);
+  await page.evaluate(() => apply({ layout: 'board' }));
+  await page.evaluate(() => api.resetSettings());
+  await page.waitForTimeout(500);
+  assert.equal(readData().settings.layout, 'row');
+  assert.equal(readData().columns.length, 3, 'reset keeps columns');
+  assert.equal(readData().notes.length, 3, 'reset keeps notes');
+  await app.close();
+  fs.writeFileSync(dataFile, JSON.stringify({ notes: [{ id: 'x', text: 'hi', color: 0 }], columns: [{ id: 'a', name: '' }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
+  await page.evaluate(() => apply({ layout: 'board' }));
+  assert.deepEqual(await colNames(), ['To do', 'Doing', 'Done'], 'invalid columns fall back to defaults');
+  await app.close();
+
+  // ---- drag the edge to resize; the height is remembered ----
+  fs.writeFileSync(dataFile, JSON.stringify({ notes: [{ id: 'x', text: 'hi', color: 0 }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('#grip');
+  const height = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds().height);
+  const h0 = await height();
+  const g = await page.locator('#grip').boundingBox();
+  await page.mouse.move(g.x + g.width / 2, g.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2, g.y + 45, { steps: 6 });
+  await page.mouse.move(g.x + g.width / 2, g.y + 105, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  const h1 = await height();
+  assert(Math.abs(h1 - (h0 + 100)) <= 4, `dragging the grip 100px resizes (${h0} -> ${h1})`);
+  const pct = readData().settings.heightPct;
+  assert(pct > 40 && pct < 100, `height saved as a percentage (${pct})`);
+  await app.close();
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('#grip');
+  assert(Math.abs((await height()) - h1) <= 4, 'resized height survives a restart');
+  await page.locator('#grip').dblclick();
+  await page.waitForTimeout(500);
+  assert(Math.abs((await height()) - h0) <= 4, 'double-click resets to the default height');
+  await app.close();
+
   console.log('OK');
 })().catch((e) => { console.error(e); process.exit(1); });
