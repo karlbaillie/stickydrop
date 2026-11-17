@@ -39,7 +39,13 @@ screenshots:
 
 # Build installers for this OS into dist/ (unsigned, never published)
 dist:
+    #!/usr/bin/env bash
+    set -euo pipefail
     npx electron-builder --publish never
+    # macOS: an unsigned arm64 app is reported as "damaged" after download, so prove the bundle carries a valid (ad-hoc) signature
+    if [[ "$(uname)" == Darwin ]]; then
+        for app in dist/mac*/StickyDrop.app; do codesign --verify --deep --strict --verbose=2 "$app"; done
+    fi
 
 # What CI runs on every push: clean install, tests, installer build
 ci: install test dist

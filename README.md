@@ -107,8 +107,10 @@ Notes:
   Ubuntu. The `.deb` installs the helper properly; the AppImage disables the sandbox itself.
 - If `npm install` finishes but Electron says it "failed to install correctly", run `node node_modules/electron/install.js`
   (or delete `node_modules/electron` and reinstall).
-- `.github/workflows/build.yml` builds all three platforms on GitHub runners. Builds are unsigned: macOS needs
-  right-click → Open the first time; Windows SmartScreen shows "More info → Run anyway".
+- `.github/workflows/build.yml` builds all three platforms on GitHub runners. Builds are not notarised or
+  code-signed with a paid certificate. **macOS** (ad-hoc signed): the first launch is blocked; open System Settings →
+  Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine /Applications/StickyDrop.app`.
+  The release build is arm64 (Apple Silicon) only for now. **Windows**: SmartScreen shows "More info → Run anyway".
 
 ## Using it
 

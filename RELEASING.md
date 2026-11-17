@@ -19,5 +19,9 @@ and tray/global-shortcut behaviour inside the sandbox is unverified. Test the sn
 dist/*.snap`) before the first upload; if it misbehaves, ship `.deb`/AppImage only and drop `snap` from the targets.
 
 ## Signing
-Builds are unsigned: macOS needs right-click → Open the first time, Windows SmartScreen shows "More info → Run anyway".
+The macOS app is ad-hoc signed (`mac.identity: "-"`; `just dist` verifies it with `codesign`). Without that, an arm64 app
+downloaded from the internet is reported as "damaged and can't be opened". Ad-hoc is not notarised, so macOS still blocks the
+first launch: System Settings → Privacy & Security → "Open Anyway", or `xattr -dr com.apple.quarantine StickyDrop.app`.
+Windows SmartScreen shows "More info → Run anyway". Removing these prompts needs an Apple Developer ID plus notarisation
+and a Windows code-signing certificate.
 Signing needs an Apple Developer account / a Windows code-signing certificate.

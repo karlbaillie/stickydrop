@@ -46,7 +46,10 @@
       "category": "public.app-category.productivity",
       "extendInfo": {
         "LSUIElement": true
-      }
+      },
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "win": {
       "target": "nsis"
