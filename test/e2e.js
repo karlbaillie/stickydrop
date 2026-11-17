@@ -278,10 +278,11 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   const d = readData();
   const defaults = await page.evaluate(() => Object.fromEntries(Object.entries(meta.schema).map(([k, s]) => [k, s.def])));
   for (const [k, v] of Object.entries(defaults)) if (k !== 'display') assert.deepEqual(d.settings[k], v, 'reset ' + k);
-  if (d.settings.hotkey === 'F9') {
-    assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('F9')), true);
-    assert.equal(await page.locator('#hotkey').textContent(), 'F9');
-  } else { // F9 held by another running StickyDrop: everything else reset and the user is told why
+  const defKey = process.platform === 'darwin' ? 'Control+Alt+N' : 'F9';
+  if (d.settings.hotkey === defKey) {
+    assert.equal(await app.evaluate(({ globalShortcut }, k) => globalShortcut.isRegistered(k), defKey), true);
+    assert.equal(await page.locator('#hotkey').textContent(), defKey);
+  } else { // the default key held by another running StickyDrop: everything else reset and the user is told why
     assert.match(await page.locator('#settings-err').textContent(), /taken/);
   }
   assert.equal(await page.locator('#s-opacity').inputValue(), '100');
