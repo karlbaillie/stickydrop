@@ -415,6 +415,12 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.locator('#grip').dblclick();
   await page.waitForTimeout(500);
   assert(Math.abs((await height()) - h0) <= 4, 'double-click resets to the default height');
+  const noteW = () => page.locator('.note').first().evaluate((x) => Math.round(x.getBoundingClientRect().width));
+  assert.equal(await noteW(), 420, 'a lone note is capped at the default width');
+  await page.evaluate(() => apply({ noteWidth: 300 }));
+  assert.equal(await noteW(), 300, 'note width setting applies');
+  await page.evaluate(() => apply({ noteWidth: 5000 }));
+  assert.equal(await noteW(), 800, 'note width is clamped to the maximum');
   await app.close();
 
   console.log('OK');

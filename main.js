@@ -49,6 +49,7 @@ const SCHEMA = {
   agingDays:     { group: 'Notes', label: 'Fully aged after', type: 'range', min: 1, max: 60, step: 1, unit: ' days', def: 14 },
   showAge:       { group: 'Notes', label: 'Show created / edited time', type: 'check', def: true },
   layout:        { group: 'Notes', label: 'Layout', type: 'select', options: { row: 'Row of notes', board: 'Kanban board (columns)' }, def: 'row' },
+  noteWidth:     { group: 'Notes', label: 'Note width (row layout)', type: 'range', min: 260, max: 800, step: 10, unit: 'px', def: 420 },
   doneSink:      { group: 'Notes', label: 'Move notes to the end when marked done', type: 'check', def: false },
   theme:         { group: 'Appearance', label: 'Theme', type: 'select', options: { system: 'Follow system', dark: 'Dark', light: 'Light' }, def: 'dark' },
   opacity:       { group: 'Appearance', label: 'Background opacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', def: 100 },

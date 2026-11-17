@@ -38,6 +38,7 @@ function applyStyle() {
   root.setProperty('--pct', settings.opacity + '%');
   root.setProperty('--font', meta.fonts[settings.font]);
   root.setProperty('--fs', settings.fontSize + 'px');
+  root.setProperty('--note-w', settings.noteWidth + 'px');
   document.documentElement.dataset.theme = settings.theme;
   document.body.dataset.valign = settings.valign;
   document.body.classList.toggle('no-anim', !settings.animate);

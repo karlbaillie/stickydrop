@@ -149,6 +149,7 @@ stickydrop             # a second launch simply shows the window
 | Window | Drops from | Top | Top or bottom |
 | Notes | Render Markdown when not editing | on | Off = plain text boxes |
 | Notes | Layout | Row of notes | Row or Kanban board; columns, colours and limits are kept in your data, not reset |
+| Notes | Note width | 420 px | 260–800; the most a note stretches in the row layout |
 | Notes | Aging | Fade | Off, Fade, or Vintage |
 | Notes | Fully aged after | 14 days | 1–60 |
 | Notes | Show created / edited time | on | |

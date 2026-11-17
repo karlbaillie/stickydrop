@@ -49,6 +49,7 @@ body[data-valign="bottom"] #grip { order: -1; }
 .col-head .col-name { font-weight: 600; background: none; border: 0; padding: 2px 4px; color: inherit; }
 input.col-name { font: inherit; font-weight: 600; width: 9em; }
 .col-head .count { font-size: 12px; color: var(--muted); }
+#board:not(.cols) > .note { max-width: var(--note-w, 420px); } /* a lone note stays note-sized instead of stretching across the screen */
 .col > .note { flex: none; min-height: 150px; min-width: 0; }
 .note-head[draggable="true"] { cursor: grab; }
 .note.dragging { opacity: .4; }
