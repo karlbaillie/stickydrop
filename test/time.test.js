@@ -67,5 +67,40 @@ const s = T.summarize([
 ], now);
 assert.deepEqual([s.overdue, s.today], [2, 1]);
 assert.deepEqual(s.items.map((x) => x.note.id), ['old', 'gone', 'today']);
+assert.equal(T.summarize([{ id: 'a', due: '2026-11-13', archived: 1 }], now).overdue, 0, 'archived notes are not summarised');
+
+// checklist progress
+assert.deepEqual(T.checklist('- [ ] a\n- [x] b\n* [X] c\n+ [ ] d\n1. [x] e\n- plain\n[ ] not a task'), { done: 3, total: 5 });
+assert.deepEqual(T.checklist('```\n- [ ] in code\n```\n  - [ ] nested'), { done: 0, total: 1 }, 'fenced code ignored, nested counted');
+assert.deepEqual(T.checklist(''), { done: 0, total: 0 });
+
+// recurring: next due after now, keeping the time; never in the past
+const nd = (due, r, at = now) => T.nextDue(due, r, at);
+assert.equal(nd('2026-11-14T09:00', 'daily'), '2026-11-15T09:00');
+assert.equal(nd('2026-11-14T11:00', 'daily'), '2026-11-15T11:00', 'always moves forward even if not yet due');
+assert.equal(nd('2026-11-01', 'daily'), '2026-11-15', 'catches up past missed days, date-only');
+assert.equal(nd('2026-11-13T09:00', 'weekdays'), '2026-11-16T09:00', 'Fri -> Mon');
+assert.equal(nd('2026-11-14', 'weekly'), '2026-11-21');
+assert.equal(nd('2026-01-31', 'monthly', new Date(2026, 0, 31, 12)), '2026-02-28', 'clamped to a short month');
+assert.equal(nd('2026-01-31', 'monthly', new Date(2026, 2, 1)), '2026-03-31', 'and back to the 31st after');
+assert.equal(nd('2026-12-15T08:00', 'monthly', new Date(2026, 11, 20)), '2027-01-15T08:00', 'across a year');
+assert.equal(nd('2026-11-14', 'never'), null);
+assert.equal(nd(undefined, 'daily'), null);
+
+// reminders: timed only, lead time, once per due value, not for something long past
+const notesR = [
+  { id: 'a', due: '2026-11-14T10:10' }, // in 10 min
+  { id: 'b', due: '2026-11-14T10:30' }, // in 30 min
+  { id: 'c', due: '2026-11-14' }, // date only: never
+  { id: 'd', due: '2026-11-14T09:00', done: true },
+  { id: 'e', due: '2026-11-14T09:00', archived: 5 },
+  { id: 'f', due: '2026-11-12T09:00' }, // two days late: no
+  { id: 'g', due: '2026-11-14T09:30' }, // 30 min late: yes
+];
+const ids = (r, lead) => T.remindersDue(notesR, r, now, lead).map((n) => n.id);
+assert.deepEqual(ids({}, 0), ['g']);
+assert.deepEqual(ids({}, 15), ['a', 'g']);
+assert.deepEqual(ids({ a: '2026-11-14T10:10' }, 15), ['g'], 'already reminded for this due');
+assert.deepEqual(ids({ a: '2026-11-14T08:00' }, 15), ['a', 'g'], 'a changed due reminds again');
 
 console.log('time.test OK');

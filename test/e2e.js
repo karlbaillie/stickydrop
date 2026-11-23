@@ -8,9 +8,10 @@ const path = require('path');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stickydrop-test-'));
 const dataFile = path.join(dir, 'data.json');
 const readData = () => JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+const Time_checklist = (t) => { const c = require('../timeutil').checklist(t); return `${c.done}/${c.total}`; };
 const launch = () => electron.launch({
   args: [path.join(__dirname, '..'), '--no-sandbox'],
-  env: { ...process.env, STICKYDROP_DATA: dir, STICKYDROP_SHOW: '1' },
+  env: { ...process.env, STICKYDROP_DATA: dir, STICKYDROP_SHOW: '1', STICKYDROP_NO_NOTIFY: '1' },
 });
 const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
 
@@ -34,7 +35,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.deepEqual(readData().notes.map((n) => n.text), ['standup: ship it', 'second note']);
 
   // delete + undo
-  await page.locator('.note-head button[title="Delete note"]').nth(1).click();
+  await page.locator('.note-head button[title="Archive note"]').nth(1).click();
   assert.equal(await page.locator('.note').count(), 1);
   await page.click('#undo');
   assert.equal(await page.locator('.note').count(), 2);
@@ -87,7 +88,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.evaluate(() => apply({ markdown: true }));
   await page.waitForTimeout(100);
   // remove the scratch note again
-  await page.locator('.note-head button[title="Delete note"]').nth(2).click();
+  await page.locator('.note-head button[title="Archive note"]').nth(2).click();
   assert.equal(await page.locator('.note').count(), 2);
 
   // due dates, done, timestamps, aging
@@ -154,14 +155,16 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.keyboard.type('scratch');
   await page.evaluate(() => apply({ doneSink: true }));
   await note1.locator('button[title="Mark done"]').click();
-  assert.deepEqual(await page.evaluate(() => notes.map((n) => n.text)), ['second note', 'scratch', 'standup: ship it']);
+  assert.deepEqual(await page.evaluate(() => notes.filter((n) => !n.archived).map((n) => n.text)), ['second note', 'scratch', 'standup: ship it']);
   await page.evaluate(() => { notes.unshift(notes.pop()); notes[0].done = false; save(); render(); apply({ doneSink: false }); });
-  await page.locator('.note-head button[title="Delete note"]').nth(2).click();
-  assert.deepEqual(await page.evaluate(() => notes.map((n) => n.text)), ['standup: ship it', 'second note']);
+  await page.locator('.note-head button[title="Archive note"]').nth(2).click();
+  assert.deepEqual(await page.evaluate(() => notes.filter((n) => !n.archived).map((n) => n.text)), ['standup: ship it', 'second note']);
 
   // settings: height + hotkey change + invalid hotkey is rejected
   await page.keyboard.press('Control+,');
+  await page.getByRole('tab', { name: 'Window' }).click();
   await page.locator('#s-heightPct').fill('60');
+  await page.getByRole('tab', { name: 'General' }).click();
   await page.locator('#hotkey').click();
   await page.keyboard.press('Control+Alt+KeyJ');
   await page.waitForTimeout(300);
@@ -205,16 +208,37 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await set({ fontSize: 999, palette: 'nope', widthPct: 'x', valign: 'sideways' });
   const st = (await set({})).settings;
   assert.equal(st.fontSize, 32); assert.equal(st.palette, 'mono'); assert.equal(st.widthPct, 100); assert.equal(st.valign, 'top');
-  await set({ opacity: 100, fontSize: 17, font: 'hand', showToolbar: true, theme: 'dark', palette: 'classic' });
+  await set({ opacity: 100, fontSize: 14, font: 'hand', showToolbar: true, theme: 'dark', palette: 'classic' });
   assert.equal(await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors), true);
   await page.waitForTimeout(500);
   assert.equal(readData().settings.heightPct, 60);
 
-  // the settings form is generated from the schema: every control present
+  // the settings form is generated from the schema: a tab per group, one panel showing, every control present
   await page.keyboard.press('Control+,');
-  await page.waitForSelector('#s-palette');
-  assert(await page.locator('#settings-body [id^="s-"]:not(output)').count() >= 17);
+  await page.waitForSelector('#s-palette', { state: 'attached' });
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['General', 'Window', 'Appearance', 'Notes', 'Reminders', 'Labels']);
+  assert.equal(await page.locator('.settings-panel:visible').count(), 1, 'one settings tab at a time');
+  assert(await page.locator('#settings-body [id^="s-"]:not(output)').count() >= 26);
   assert.equal(await page.locator('#s-display option').count() >= 2, true);
+  assert.equal(await page.evaluate(() => document.activeElement.textContent), 'General', 'the tab list has focus');
+  await page.keyboard.press('ArrowDown'); // arrow keys move between tabs
+  await page.keyboard.press('ArrowDown');
+  assert(await page.locator('#s-palette').isVisible(), 'Appearance showing');
+  assert.equal(await page.locator('.settings-panel:visible .settings-section h3').first().textContent(), 'Window');
+  await page.locator('#s-showToolbar').click(); // a switch toggles its setting
+  assert.equal(await page.evaluate(() => settings.showToolbar), false);
+  await page.locator('#s-showToolbar').click();
+  assert.equal(await page.evaluate(() => settings.showToolbar), true);
+  await page.getByRole('tab', { name: 'Labels' }).click();
+  await page.locator('#labels-set input[aria-label="New label"]').fill('Decision');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(() => labels.map((l) => l.name)), ['Decision'], 'a label can be added in Settings');
+  await page.locator('#labels-set button[title^="Delete label"]').click();
+  assert.deepEqual(await page.evaluate(() => labels.length), 0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+,');
+  assert(await page.locator('#labels-set').isVisible(), 'reopening shows the last settings tab');
+  await page.getByRole('tab', { name: 'General' }).click();
 
   // settings stay usable in a short window: buttons visible, body scrolls if needed
   await set({ heightPct: 15 });
@@ -222,10 +246,11 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   const fit = await page.evaluate(() => {
     const f = document.getElementById('settings-form').getBoundingClientRect();
     const d = document.getElementById('settings-close').getBoundingClientRect();
+    const q = document.getElementById('quit').getBoundingClientRect();
     const b = document.getElementById('settings-body');
-    return { formBottom: f.bottom, vh: innerHeight, doneBottom: d.bottom, scrolls: b.scrollHeight > b.clientHeight };
+    return { formBottom: f.bottom, vh: innerHeight, doneBottom: d.bottom, quitBottom: q.bottom, scrolls: b.scrollHeight > b.clientHeight };
   });
-  assert(fit.formBottom <= fit.vh && fit.doneBottom <= fit.vh, 'form and Done button fit in the window');
+  assert(fit.formBottom <= fit.vh && fit.doneBottom <= fit.vh && fit.quitBottom <= fit.vh, 'form, Done and Quit fit in the window');
   assert(fit.scrolls, 'body scrolls at 15% height');
   await set({ heightPct: 60 });
 
@@ -285,12 +310,29 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   } else { // the default key held by another running StickyDrop: everything else reset and the user is told why
     assert.match(await page.locator('#settings-err').textContent(), /taken/);
   }
-  assert.equal(await page.locator('#s-opacity').inputValue(), '100');
-  assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue('--pct')), '100%');
-  assert.deepEqual(d.notes.map((n) => n.text), ['standup: ship it', 'second note'], 'notes kept');
+  assert.equal(await page.locator('#s-opacity').inputValue(), '85', 'default opacity');
+  assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue('--pct')), '85%');
+  assert.deepEqual(d.notes.filter((n) => !n.archived).map((n) => n.text), ['standup: ship it', 'second note'], 'notes kept');
   await page.keyboard.press('Escape');
   await page.screenshot({ path: path.join(dir, 'shot.png') });
   console.log('screenshot', path.join(dir, 'shot.png'));
+  await app.close();
+
+  // upgrading from before version 2: old default theme/opacity move to the new defaults once; a chosen value stays
+  fs.writeFileSync(dataFile, JSON.stringify({ settings: { theme: 'dark', opacity: 100, fontSize: 17, palette: 'earth' }, notes: [{ id: 'x', text: 'hi', color: 0 }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
+  assert.deepEqual(await page.evaluate(() => [settings.theme, settings.opacity, settings.fontSize, settings.palette]), ['system', 85, 14, 'earth'], 'moved to the new defaults');
+  await page.evaluate(() => apply({ theme: 'dark', opacity: 100, fontSize: 17 })); // chosen after the upgrade: kept from now on
+  await page.waitForTimeout(500);
+  await app.close();
+  assert.equal(readData().version, 3);
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
+  assert.deepEqual(await page.evaluate(() => [settings.theme, settings.opacity, settings.fontSize]), ['dark', 100, 17], 'the migration runs only once');
+  await app.close();
+  // a version-2 file (alpha.3 betas) only gets the font-size step
+  fs.writeFileSync(dataFile, JSON.stringify({ version: 2, settings: { theme: 'dark', opacity: 100, fontSize: 17 }, notes: [{ id: 'x', text: 'hi', color: 0 }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
+  assert.deepEqual(await page.evaluate(() => [settings.theme, settings.opacity, settings.fontSize]), ['dark', 100, 14], 'each step runs once');
   await app.close();
 
   // corrupt file is moved aside, not overwritten
@@ -341,11 +383,13 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   // rename, add, delete columns
   await page.locator('.col-name').first().click();
   await page.keyboard.type('Backlog'); await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#toolbar #addcol:visible').count(), 1, '+ Column sits in the toolbar on a board');
+  assert.equal(await page.locator('#board > button').count(), 0, 'and takes no board width');
   await page.getByRole('button', { name: '+ Column' }).click();
   await page.keyboard.type('Review'); await page.keyboard.press('Enter');
   assert.deepEqual(await colNames(), ['Backlog', 'Doing', 'Done', 'Review']);
   await page.waitForTimeout(500);
-  assert.deepEqual(readData().columns.map((c) => c.name), ['Backlog', 'Doing', 'Done', 'Review']);
+  assert.deepEqual(readData().tabs[0].columns.map((c) => c.name), ['Backlog', 'Doing', 'Done', 'Review']);
   await page.locator('.col').nth(1).locator('.col-menu-btn').click();
   await page.getByRole('button', { name: 'Delete column' }).click();
   assert.deepEqual(await colNames(), ['Backlog', 'Done', 'Review']);
@@ -369,7 +413,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.locator('.col').nth(1).locator('.col-head').dragTo(review, { targetPosition: { x: box.width - 5, y: 100 } });
   assert.deepEqual(await colNames(), ['Backlog', 'Review', 'Done'], 'columns reordered by dragging');
   await page.waitForTimeout(500);
-  const saved = readData().columns;
+  const saved = readData().tabs[0].columns;
   assert.deepEqual(saved.map((c) => c.name), ['Backlog', 'Review', 'Done']);
   assert.equal(saved[2].collapsed, true);
   assert.equal(saved[2].color, 3); // swatch 0 is "no colour"
@@ -403,6 +447,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await setLayout('row');
   assert.deepEqual(await page.locator('textarea').evaluateAll((t) => t.map((x) => x.value)).then((v) => v.sort()), ['A', 'B', 'C']);
 
+  assert(await page.locator('#addcol').isHidden(), 'no + Column in the row layout');
   // row layout: the header's empty space is a handle (grab cursor, grip), dragging reorders, Alt+arrows too
   const rowOrder = () => page.locator('#board > .note textarea').evaluateAll((t) => t.map((x) => x.value));
   const o0 = await rowOrder();
@@ -425,13 +470,169 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.evaluate(() => api.resetSettings());
   await page.waitForTimeout(500);
   assert.equal(readData().settings.layout, 'row');
-  assert.equal(readData().columns.length, 3, 'reset keeps columns');
+  assert.equal(readData().tabs[0].columns.length, 3, 'reset keeps columns');
   assert.equal(readData().notes.length, 3, 'reset keeps notes');
   await app.close();
   fs.writeFileSync(dataFile, JSON.stringify({ notes: [{ id: 'x', text: 'hi', color: 0 }], columns: [{ id: 'a', name: '' }] }));
   app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
   await page.evaluate(() => apply({ layout: 'board' }));
   assert.deepEqual(await colNames(), ['To do', 'Doing', 'Done'], 'invalid columns fall back to defaults');
+  await app.close();
+
+  // ---- organising: checklist progress, labels, filter, sort, archive, recurring, tabs, reminders ----
+  fs.writeFileSync(dataFile, JSON.stringify({ notes: [
+    { id: 'a', text: 'Alpha\n- [ ] one\n- [x] two', color: 0, created: 1, updated: 3 },
+    { id: 'b', text: 'Bravo', color: 1, created: 2, updated: 2 },
+  ] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('.note');
+  const texts = () => page.evaluate(() => visible().map((n) => n.text.split('\n')[0]));
+  const noteA = page.locator('.note').first();
+
+  // #12 checklist progress: "1/2", ticking the last box completes it
+  assert.equal(await noteA.locator('.progress').textContent(), '☑ 1/2');
+  assert(await page.locator('.note').nth(1).locator('.progress').isHidden(), 'no tasks, no badge');
+  await page.locator('.note').nth(1).locator('.view').click(); // edit Bravo so Alpha renders
+  await noteA.locator('.view input[type=checkbox]').first().click();
+  assert.equal(await noteA.locator('.progress').textContent(), '☑ 2/2');
+  assert(await cls(noteA.locator('.progress'), 'complete'));
+
+  // #7 labels: create from a note, shown as a chip, saved
+  await noteA.locator('.label-btn').click();
+  await page.keyboard.type('Action');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await noteA.locator('.chips .chip').allTextContents(), ['Action']);
+  await page.waitForTimeout(500);
+  assert.deepEqual(readData().labels.map((l) => l.name), ['Action']);
+  assert.deepEqual(readData().notes[0].labels, [readData().labels[0].id]);
+
+  // #11 search and filter: text, label chip, quick filter; Esc clears
+  await page.keyboard.press('Control+f');
+  assert(await page.locator('#filterbar').isVisible(), 'Ctrl+F opens the filter bar');
+  await page.keyboard.type('brav');
+  assert.deepEqual(await texts(), ['Bravo']);
+  assert.equal(await page.locator('#fcount').textContent(), '1 of 2');
+  await page.keyboard.press('Escape');
+  assert(await page.locator('#filterbar').isHidden());
+  assert.deepEqual(await texts(), ['Alpha', 'Bravo'], 'Esc clears the filter');
+  assert(await visible(app), 'and does not hide the window');
+  await noteA.locator('.chips .chip').click(); // a label chip filters by that label
+  assert.deepEqual(await texts(), ['Alpha']);
+  await page.click('#fclose');
+  await page.evaluate(() => { notes[1].due = '2020-01-01T09:00'; save(); render(); });
+  await page.keyboard.press('Control+f');
+  await page.locator('#quick .chip', { hasText: 'Overdue' }).click();
+  assert.deepEqual(await texts(), ['Bravo'], 'quick filter: overdue');
+  await page.click('#fclose');
+
+  // #9 sort, once, with undo
+  await page.click('#sort');
+  await page.locator('#sort-menu button', { hasText: 'Due date' }).click();
+  assert.deepEqual(await texts(), ['Bravo', 'Alpha'], 'sorted by due date (none last)');
+  await page.click('#undo');
+  assert.deepEqual(await texts(), ['Alpha', 'Bravo'], 'undo restores the order');
+  await page.click('#sort');
+  await page.locator('#sort-menu button', { hasText: 'Oldest first' }).click();
+  assert.deepEqual(await texts(), ['Alpha', 'Bravo']);
+
+  // #8 archive: × archives (undo), the archive view restores or deletes for good; an empty note is just deleted
+  await page.locator('.note').nth(1).locator('button[title="Archive note"]').click();
+  assert.deepEqual(await texts(), ['Alpha']);
+  assert.equal(await page.locator('#archive').textContent(), 'Archive (1)');
+  await page.click('#archive');
+  assert.equal(await page.locator('.archived-note').count(), 1);
+  assert.match(await page.locator('.archived-note').textContent(), /Bravo/);
+  await page.getByRole('button', { name: 'Restore' }).click();
+  assert.equal(await page.locator('.archived-note').count(), 0);
+  await page.keyboard.press('Escape'); // Esc leaves the archive view first
+  assert(await visible(app));
+  assert.deepEqual(await texts(), ['Alpha', 'Bravo'], 'restored');
+  await page.locator('.note').nth(1).locator('button[title="Archive note"]').click();
+  await page.click('#archive');
+  const del = page.locator('.archived-note').getByRole('button', { name: 'Delete' });
+  await del.click();
+  assert.equal(await page.locator('.archived-note').count(), 1, 'the first click only arms Delete');
+  await page.locator('.archived-note').getByRole('button', { name: 'Click again' }).click();
+  assert.equal(await page.locator('.archived-note').count(), 0);
+  await page.getByRole('button', { name: 'Back to notes' }).click();
+  await page.waitForTimeout(500);
+  assert.deepEqual(readData().notes.map((n) => n.id), ['a'], 'deleted for good');
+  await page.keyboard.press('Control+n');
+  await page.locator('.note').nth(1).locator('button[title="Archive note"]').click();
+  assert.equal(await page.evaluate(() => notes.length), 1, 'an empty note is deleted, not archived');
+
+  // #6 recurring: set in the due popover; ✓ rolls the date forward and unticks tasks instead of finishing
+  await noteA.locator('.due').click();
+  await page.locator('.due-pop input[type=date]').fill('2020-01-06');
+  await page.locator('.due-pop input[type=time]').fill('09:00');
+  await page.locator('.due-pop select').selectOption('weekly');
+  await page.keyboard.press('Escape');
+  assert.match(await noteA.locator('.due').textContent(), /↻/);
+  await noteA.locator('button[title="Mark done"]').click();
+  const rolled = await page.evaluate(() => notes[0]);
+  assert(!rolled.done, 'a recurring note stays open');
+  assert(new Date(rolled.due) > new Date(), `rolled into the future (${rolled.due})`);
+  assert.equal(new Date(rolled.due).getDay(), 1, 'still on a Monday');
+  assert.equal(rolled.due.slice(10), 'T09:00', 'same time');
+  assert.equal(Time_checklist(rolled.text), '0/2', 'tasks unticked');
+  await page.click('#undo');
+  assert.equal(await page.evaluate(() => notes[0].due), '2020-01-06T09:00', 'undo puts the date back');
+
+  // #10 tabs: add and name one, it has its own notes and columns, Ctrl+1/2 switch, drop a note on a tab to move it
+  await page.click('.tab-add');
+  await page.keyboard.type('Meeting');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await page.locator('#tabs .tab').allTextContents(), ['Notes', 'Meeting']);
+  assert.deepEqual(await texts(), [''], 'a new tab starts with one empty note');
+  await page.click('#layout'); // this tab only becomes a board
+  assert.equal(await page.locator('#layout').textContent(), 'Layout: Board');
+  await page.locator('.col-name').first().click();
+  await page.keyboard.type('Agenda'); await page.keyboard.press('Enter');
+  await page.keyboard.press('Control+1');
+  assert.deepEqual(await texts(), ['Alpha']);
+  assert.equal(await page.locator('.col').count(), 0, 'each tab has its own layout: Notes is still a row');
+  assert.equal(await page.locator('#layout').textContent(), 'Layout: Row');
+  await page.click('#layout');
+  assert.equal(await page.locator('.col-name').first().textContent(), 'To do', 'each tab has its own columns');
+  const gBox = await page.locator('.note-grip').first().boundingBox(); // the grip lets presses through to the header
+  const tBox = await page.locator('#tabs .tab', { hasText: 'Meeting' }).boundingBox();
+  await page.mouse.move(gBox.x + gBox.width / 2, gBox.y + gBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(tBox.x + tBox.width / 2, tBox.y + tBox.height / 2, { steps: 10 });
+  assert(await cls(page.locator('#tabs .tab', { hasText: 'Meeting' }), 'drop-tab'), 'the tab lights up as a drop target');
+  await page.mouse.up();
+  await page.keyboard.press('Control+2');
+  assert.deepEqual((await texts()).sort(), ['', 'Alpha'], 'the dropped note moved to that tab');
+  assert.equal(await page.evaluate(() => colOf(notes.find((n) => n.id === 'a')).name), 'Agenda', 'into its first column');
+  await page.waitForTimeout(500);
+  assert.deepEqual(readData().tabs.map((t) => t.name), ['Notes', 'Meeting']);
+  assert.equal(readData().activeTab, readData().tabs[1].id, 'the active tab is remembered');
+  await page.locator('.tab-x').click(); // delete the Meeting tab, then undo
+  assert.deepEqual(await page.locator('#tabs .tab').allTextContents(), ['Notes']);
+  await page.click('#undo');
+  assert.deepEqual(await page.locator('#tabs .tab').allTextContents(), ['Notes', 'Meeting']);
+  await page.waitForTimeout(500);
+  assert.deepEqual(readData().tabs.map((t) => t.layout), ['board', 'board'], 'tab layouts are saved');
+  await page.click('#layout'); // Notes back to a row for the reminder checks
+
+  // #2 reminders: a timed note due inside the lead time is reminded once; a tray/notification click opens its tab
+  await page.keyboard.press('Control+1');
+  await page.evaluate(() => {
+    const d = new Date(Date.now() + 5 * 60e3);
+    const p = (x) => String(x).padStart(2, '0');
+    notes.push({ ...newNote(), id: 'rem', text: 'Call Sam', due: `${Time.toDateStr(d)}T${p(d.getHours())}:${p(d.getMinutes())}` });
+    save();
+    render();
+  });
+  await page.waitForTimeout(1800); // saves are followed by a reminder check
+  const sent = await app.evaluate(() => globalThis.stickydropReminders);
+  assert.deepEqual(sent.map((r) => [r.id, r.title]), [['rem', 'Call Sam']], 'reminded 10 minutes ahead (the default)');
+  await page.keyboard.press('Control+2');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('focus-note', 'rem'));
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => tab.name), 'Notes', 'clicking a reminder switches to its tab');
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.note')?.note.id), 'rem', 'and focuses the note');
+  await page.waitForTimeout(500);
+  assert.equal(readData().reminded.rem, readData().notes.find((n) => n.id === 'rem').due, 'remembered, so it fires once');
   await app.close();
 
   // ---- auto-scroll while dragging near an edge ----
@@ -495,6 +696,22 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.equal(await noteW(), 300, 'note width setting applies');
   await page.evaluate(() => apply({ noteWidth: 5000 }));
   assert.equal(await noteW(), 800, 'note width is clamped to the maximum');
+  // minimum width: many notes stop squeezing at the minimum and the row scrolls instead
+  await page.evaluate(() => apply({ noteWidth: 420 }));
+  await page.evaluate(() => { for (let i = 0; i < 12; i++) notes.push({ ...newNote(), text: 'n' + i }); render(); });
+  const widths = () => page.locator('#board > .note').evaluateAll((els) => els.map((x) => Math.round(x.getBoundingClientRect().width)));
+  assert((await widths()).every((w) => w === 300), 'notes stop at the default 300px minimum');
+  assert(await page.evaluate(() => board.scrollWidth > board.clientWidth), 'and the row scrolls');
+  await page.evaluate(() => apply({ noteMinWidth: 380 }));
+  assert((await widths()).every((w) => w === 380), 'the minimum is adjustable');
+  await page.evaluate(() => apply({ noteMinWidth: 600, noteWidth: 300 }));
+  assert((await widths()).every((w) => w === 600), 'a maximum below the minimum gives way to the minimum');
+  // a new tab starts on the Default layout setting, not the current tab's layout
+  await page.click('#layout');
+  assert.equal(await page.locator('#layout').textContent(), 'Layout: Board');
+  await page.click('.tab-add');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#layout').textContent(), 'Layout: Row', 'new tabs start as a row of notes');
   await app.close();
 
   console.log('OK');

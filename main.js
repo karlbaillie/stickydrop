@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, screen, nativeImage, nativeTheme, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, screen, nativeImage, nativeTheme, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Time = require('./timeutil');
@@ -33,31 +33,51 @@ const displayChoices = () => ({
   ...Object.fromEntries(screen.getAllDisplays().map((d, i) => [`id:${d.id}`, `Display ${i + 1} (${d.size.width}×${d.size.height})`])),
 });
 
+// group = the settings tab, section = a heading within it, hint = one line under the label. The order here is the order shown.
 const SCHEMA = {
-  display:       { group: 'General', label: 'Show on', type: 'select', options: displayChoices, def: 'mouse' },
-  hideOnBlur:    { group: 'General', label: 'Hide when focus is lost', type: 'check', def: true },
-  refocus:       { group: 'General', label: 'Shortcut refocuses an unfocused window instead of hiding it', type: 'check', def: true },
-  alwaysOnTop:   { group: 'General', label: 'Stay on top', type: 'check', def: true },
-  showTray:      { group: 'General', label: 'Show tray icon', type: 'check', def: true },
-  launchAtLogin: { group: 'General', label: 'Launch at login', type: 'check', def: false },
-  widthPct:      { group: 'Window', label: 'Width', type: 'range', min: 20, max: 100, step: 5, unit: '%', def: 100 },
-  heightPct:     { group: 'Window', label: 'Height (or drag the window edge)', type: 'range', min: 15, max: 100, step: 1, unit: '%', def: 40 },
-  halign:        { group: 'Window', label: 'Horizontal position', type: 'select', options: { left: 'Left', center: 'Center', right: 'Right' }, def: 'center' },
-  valign:        { group: 'Window', label: 'Drops from', type: 'select', options: { top: 'Top', bottom: 'Bottom' }, def: 'top' },
-  markdown:      { group: 'Notes', label: 'Render Markdown when not editing', type: 'check', def: true },
-  aging:         { group: 'Notes', label: 'Aging (from last edit)', type: 'select', options: { off: 'Off', fade: 'Fade (washes out)', vintage: 'Vintage (yellows, corner curls)' }, def: 'fade' },
-  agingDays:     { group: 'Notes', label: 'Fully aged after', type: 'range', min: 1, max: 60, step: 1, unit: ' days', def: 14 },
-  showAge:       { group: 'Notes', label: 'Show created / edited time', type: 'check', def: true },
-  layout:        { group: 'Notes', label: 'Layout', type: 'select', options: { row: 'Row of notes', board: 'Kanban board (columns)' }, def: 'row' },
-  noteWidth:     { group: 'Notes', label: 'Note width (row layout)', type: 'range', min: 260, max: 800, step: 10, unit: 'px', def: 420 },
-  doneSink:      { group: 'Notes', label: 'Move notes to the end when marked done', type: 'check', def: false },
-  theme:         { group: 'Appearance', label: 'Theme', type: 'select', options: { system: 'Follow system', dark: 'Dark', light: 'Light' }, def: 'dark' },
-  opacity:       { group: 'Appearance', label: 'Background opacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', def: 100 },
-  palette:       { group: 'Appearance', label: 'Note colours', type: 'select', options: labels(PALETTES), def: 'classic' },
-  font:          { group: 'Appearance', label: 'Font', type: 'select', options: labels(FONTS), def: 'hand' },
-  fontSize:      { group: 'Appearance', label: 'Font size', type: 'range', min: 12, max: 32, step: 1, unit: 'px', def: 17 },
-  showToolbar:   { group: 'Appearance', label: 'Show toolbar', type: 'check', def: true },
-  animate:       { group: 'Appearance', label: 'Slide animation', type: 'check', def: true },
+  // General (the shortcut itself is a custom control at the top of the tab)
+  refocus:       { group: 'General', section: 'Shortcut', label: 'Refocus instead of hiding', type: 'check', def: true,
+    hint: 'If the window is open but another app has focus, the shortcut brings it forward' },
+  hideOnBlur:    { group: 'General', section: 'Behaviour', label: 'Hide when focus is lost', type: 'check', def: true,
+    hint: 'Pin in the toolbar keeps it open for now' },
+  alwaysOnTop:   { group: 'General', section: 'Behaviour', label: 'Stay on top of other windows', type: 'check', def: true },
+  showTray:      { group: 'General', section: 'Behaviour', label: 'Show tray icon', type: 'check', def: true },
+  launchAtLogin: { group: 'General', section: 'Behaviour', label: 'Launch at login', type: 'check', def: false },
+  // Window
+  display:       { group: 'Window', section: 'Position', label: 'Show on', type: 'select', options: displayChoices, def: 'mouse' },
+  valign:        { group: 'Window', section: 'Position', label: 'Drops from', type: 'select', options: { top: 'Top', bottom: 'Bottom' }, def: 'top' },
+  halign:        { group: 'Window', section: 'Position', label: 'Horizontal position', type: 'select', options: { left: 'Left', center: 'Center', right: 'Right' }, def: 'center',
+    hint: 'When narrower than the screen' },
+  widthPct:      { group: 'Window', section: 'Size', label: 'Width', type: 'range', min: 20, max: 100, step: 5, unit: '%', def: 100 },
+  heightPct:     { group: 'Window', section: 'Size', label: 'Height', type: 'range', min: 15, max: 100, step: 1, unit: '%', def: 40,
+    hint: 'Or drag the window\'s edge' },
+  animate:       { group: 'Window', section: 'Motion', label: 'Slide in and out', type: 'check', def: true },
+  // Appearance
+  theme:         { group: 'Appearance', section: 'Window', label: 'Theme', type: 'select', options: { system: 'Follow system', dark: 'Dark', light: 'Light' }, def: 'system' },
+  opacity:       { group: 'Appearance', section: 'Window', label: 'Background opacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', def: 85 },
+  showToolbar:   { group: 'Appearance', section: 'Window', label: 'Show toolbar', type: 'check', def: true,
+    hint: 'Keyboard shortcuts still work without it' },
+  palette:       { group: 'Appearance', section: 'Notes', label: 'Note colours', type: 'select', options: labels(PALETTES), def: 'classic' },
+  font:          { group: 'Appearance', section: 'Notes', label: 'Font', type: 'select', options: labels(FONTS), def: 'hand' },
+  fontSize:      { group: 'Appearance', section: 'Notes', label: 'Font size', type: 'range', min: 12, max: 32, step: 1, unit: 'px', def: 14 },
+  // Notes
+  layout:        { group: 'Notes', section: 'Layout', label: 'Default layout', type: 'select', options: { row: 'Row of notes', board: 'Kanban board' }, def: 'row',
+    hint: 'For new tabs, and tabs not set with the toolbar\'s Layout button' },
+  noteMinWidth:  { group: 'Notes', section: 'Layout', label: 'Minimum note width', type: 'range', min: 200, max: 600, step: 10, unit: 'px', def: 300,
+    hint: 'Row layout: notes never squeeze narrower; past that the row scrolls' },
+  noteWidth:     { group: 'Notes', section: 'Layout', label: 'Maximum note width', type: 'range', min: 260, max: 800, step: 10, unit: 'px', def: 420,
+    hint: 'Row layout: the most a note stretches (never below the minimum)' },
+  doneSink:      { group: 'Notes', section: 'Layout', label: 'Move done notes to the end', type: 'check', def: false, hint: 'Row layout' },
+  markdown:      { group: 'Notes', section: 'Content', label: 'Render Markdown', type: 'check', def: true, hint: 'While a note isn\'t being edited' },
+  showAge:       { group: 'Notes', section: 'Content', label: 'Show created and edited times', type: 'check', def: true },
+  aging:         { group: 'Notes', section: 'Aging', label: 'Aging', type: 'select', options: { off: 'Off', fade: 'Fade (washes out)', vintage: 'Vintage (yellows, corner curls)' }, def: 'fade',
+    hint: 'Notes change the longer they go unedited' },
+  agingDays:     { group: 'Notes', section: 'Aging', label: 'Fully aged after', type: 'range', min: 1, max: 60, step: 1, unit: ' days', def: 14 },
+  // Reminders
+  reminders:     { group: 'Reminders', section: 'Notifications', label: 'Desktop reminders', type: 'check', def: true,
+    hint: 'For notes due at a set time, while StickyDrop is running' },
+  reminderLead:  { group: 'Reminders', section: 'Notifications', label: 'Remind me', type: 'select', def: '10',
+    options: { 0: 'At the due time', 5: '5 minutes before', 10: '10 minutes before', 15: '15 minutes before', 30: '30 minutes before', 60: '1 hour before' } },
 };
 const optionsOf = (spec) => (typeof spec.options === 'function' ? spec.options() : spec.options);
 
@@ -97,7 +117,40 @@ function cleanColumns(c) {
   }
   return out;
 }
-let data = { settings: { ...DEFAULTS }, notes: [], columns: DEFAULT_COLUMNS() };
+// Tabs: separate sets of notes, each with its own Kanban columns. Up to 12, unique ids, non-empty names; bad entries are
+// dropped, and with none left (or a file from before tabs) the old top-level `columns` become the first tab.
+const DEFAULT_TABS = (cols) => [{ id: 'main', name: 'Notes', columns: cleanColumns(cols) }];
+function cleanTabs(t, legacyColumns) {
+  if (!Array.isArray(t)) return DEFAULT_TABS(legacyColumns);
+  const ids = new Set();
+  const out = [];
+  for (const x of t.slice(0, 12)) {
+    const name = typeof x?.name === 'string' ? x.name.trim().slice(0, 24) : '';
+    if (!name || typeof x.id !== 'string' || !x.id || ids.has(x.id)) continue;
+    ids.add(x.id);
+    const tab = { id: x.id, name, columns: cleanColumns(x.columns) };
+    if (x.layout === 'row' || x.layout === 'board') tab.layout = x.layout; // else the default layout setting
+    out.push(tab);
+  }
+  return out.length ? out : DEFAULT_TABS(legacyColumns);
+}
+// Labels: named coloured tags shared by every tab. Up to 24, colour = index into the renderer's label colours.
+function cleanLabels(l) {
+  if (!Array.isArray(l)) return [];
+  const ids = new Set();
+  return l.slice(0, 24).flatMap((x) => {
+    const name = typeof x?.name === 'string' ? x.name.trim().slice(0, 24) : '';
+    if (!name || typeof x.id !== 'string' || !x.id || ids.has(x.id)) return [];
+    ids.add(x.id);
+    return [{ id: x.id, name, color: Number.isInteger(x.color) && x.color >= 0 && x.color < 6 ? x.color : 0 }];
+  });
+}
+const cleanReminded = (r) => Object.fromEntries(Object.entries(r && typeof r === 'object' ? r : {}).filter(([, v]) => typeof v === 'string'));
+
+// Saved files hold every setting, so a changed default only reaches existing installs through a one-time move here.
+// 2: theme follows the system, opacity 85%. 3: font size 14px.
+const VERSION = 3;
+let data = { version: VERSION, settings: { ...DEFAULTS }, notes: [], tabs: DEFAULT_TABS(), activeTab: 'main', labels: [], reminded: {} };
 let win, tray, pinned = false, quitting = false, saveTimer, trayTimer;
 const S = () => data.settings;
 
@@ -106,10 +159,23 @@ function load() {
   try { raw = fs.readFileSync(FILE(), 'utf8'); } catch { return; } // first run
   try {
     const d = JSON.parse(raw);
-    data = { settings: { ...DEFAULTS, ...d.settings }, notes: Array.isArray(d.notes) ? d.notes : [], columns: cleanColumns(d.columns) };
+    const tabs = cleanTabs(d.tabs, d.columns);
+    data = {
+      version: VERSION,
+      settings: { ...DEFAULTS, ...d.settings },
+      notes: Array.isArray(d.notes) ? d.notes : [],
+      tabs,
+      activeTab: tabs.some((t) => t.id === d.activeTab) ? d.activeTab : tabs[0].id,
+      labels: cleanLabels(d.labels),
+      reminded: cleanReminded(d.reminded), // note id -> the due it was reminded for (main's own; the renderer never sends it)
+    };
     for (const [k, spec] of Object.entries(SCHEMA)) { // drop stale/invalid saved values
       if (k !== 'display' && coerce(spec, S()[k]) === undefined) S()[k] = spec.def;
     }
+    const was = Number.isInteger(d.version) ? d.version : 1; // only values still on the old default move
+    if (was < 2 && S().theme === 'dark') S().theme = 'system';
+    if (was < 2 && S().opacity === 100) S().opacity = 85;
+    if (was < 3 && S().fontSize === 17) S().fontSize = 14;
   } catch {
     fs.renameSync(FILE(), FILE() + '.corrupt-' + Date.now()); // never overwrite unreadable notes
   }
@@ -199,7 +265,7 @@ function buildTray() {
     { label: headline, enabled: false },
     ...sum.items.slice(0, 6).map(({ note, state }) => ({
       label: `${state === 'overdue' ? '⚠ ' : ''}${Time.noteTitle(note.text)} — ${Time.dueLabel(note.due, now)}`,
-      click: show,
+      click: () => focusNote(note.id),
     })),
     { type: 'separator' },
     { label: `Show / hide (${S().hotkey})`, click: toggle },
@@ -217,6 +283,38 @@ function setTray(on) {
     tray = null;
   }
 }
+// show the window on the note's tab with that note focused (tray items, reminder clicks)
+function focusNote(id) {
+  show();
+  win.webContents.send('focus-note', id);
+}
+
+// ---- reminders -------------------------------------------------------------
+// Only while the app runs (it lives in the tray). Each note is reminded once per due value; changing the due (or a
+// recurring note rolling forward) arms it again.
+const shown = new Set(); // keep notifications referenced until closed, or their click handler can be collected
+const sentReminders = []; // the last few, for the end-to-end suite
+function checkReminders() {
+  if (!S().reminders) return;
+  const now = new Date();
+  const due = Time.remindersDue(data.notes, data.reminded, now, Number(S().reminderLead));
+  for (const n of due) {
+    data.reminded[n.id] = n.due;
+    const tab = data.tabs.length > 1 ? data.tabs.find((t) => t.id === n.tab) : null;
+    const body = `Due ${Time.dueLabel(n.due, now)}${tab ? ` · ${tab.name}` : ''}`;
+    sentReminders.push({ id: n.id, title: Time.noteTitle(n.text), body });
+    sentReminders.splice(0, sentReminders.length - 20);
+    if (!Notification.isSupported() || process.env.STICKYDROP_NO_NOTIFY) continue; // the test suite records, never pops up
+    const note = new Notification({ title: Time.noteTitle(n.text), body });
+    shown.add(note);
+    note.on('click', () => focusNote(n.id));
+    note.on('close', () => shown.delete(note));
+    note.show();
+  }
+  if (due.length) scheduleSave();
+}
+globalThis.stickydropReminders = sentReminders;
+
 // 'pop-up-menu' is the highest level at which macOS still delivers drag-and-drop events to the window: at 'screen-saver'
 // a drag starts but no dragover/drop ever arrives (tested on macOS 26 with every level). It is still above the menu bar
 // and Dock; full-screen apps are covered by setVisibleOnAllWorkspaces({ visibleOnFullScreen }).
@@ -237,7 +335,9 @@ const resolvedSchema = () => Object.fromEntries(Object.entries(SCHEMA).map(([k, 
 ipcMain.handle('load', () => ({
   settings: data.settings,
   notes: data.notes,
-  columns: data.columns,
+  tabs: data.tabs,
+  activeTab: data.activeTab,
+  labels: data.labels,
   schema: resolvedSchema(),
   palettes: Object.fromEntries(Object.entries(PALETTES).map(([k, v]) => [k, v.colors])),
   fonts: Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.css])),
@@ -246,10 +346,19 @@ ipcMain.on('save-notes', (_e, notes) => {
   if (!Array.isArray(notes)) return;
   data.notes = notes;
   scheduleSave();
+  const ids = new Set(notes.map((n) => n?.id));
+  for (const id of Object.keys(data.reminded)) if (!ids.has(id)) delete data.reminded[id]; // forget deleted notes
   clearTimeout(trayTimer);
-  trayTimer = setTimeout(buildTray, 1000); // keep the tray's due summary current
+  trayTimer = setTimeout(() => { buildTray(); checkReminders(); }, 1000); // tray summary and reminders follow edits
 });
-ipcMain.on('save-columns', (_e, cols) => { data.columns = cleanColumns(cols); scheduleSave(); });
+// tabs (with their columns), the active tab and the label list
+ipcMain.on('save-board', (_e, b) => {
+  if (!b || typeof b !== 'object') return;
+  data.tabs = cleanTabs(b.tabs, undefined);
+  data.activeTab = data.tabs.some((t) => t.id === b.activeTab) ? b.activeTab : data.tabs[0].id;
+  data.labels = cleanLabels(b.labels);
+  scheduleSave();
+});
 // drag-to-resize from the renderer's edge grip: live while dragging, saved (as a % of the work area) on release
 ipcMain.handle('resize-height', (_e, px, commit) => {
   if (!Number.isFinite(px)) return { settings: S() };
@@ -315,6 +424,8 @@ app.whenReady().then(() => {
   }
   setTray(S().showTray);
   setInterval(buildTray, 60000); // due/overdue changes with the clock
+  setInterval(checkReminders, 20000);
+  checkReminders();
 
   if (process.env.STICKYDROP_SHOW || process.argv.includes('--toggle')) show();
 });

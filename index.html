@@ -8,26 +8,44 @@
 <div id="app">
   <header id="toolbar">
     <button id="add" title="New note (Ctrl/Cmd+N)">+ Note</button>
-    <span class="hint">Esc hides</span>
+    <nav id="tabs" aria-label="Tabs"></nav>
     <span class="spacer"></span>
+    <button id="layout">Layout</button>
+    <button id="addcol" title="Add a column to this board (up to 8)" hidden>+ Column</button>
+    <button id="find" aria-pressed="false" title="Search and filter (Ctrl/Cmd+F)">Find</button>
+    <button id="sort" title="Sort this tab's notes">Sort</button>
+    <button id="archive" aria-pressed="false" title="Archived notes in this tab">Archive</button>
     <button id="pin" aria-pressed="false" title="Stay open when you click elsewhere">Pin</button>
     <button id="gear" title="Settings (Ctrl/Cmd+,)">Settings</button>
     <button id="close" title="Hide (Esc)">Hide</button>
   </header>
+  <div id="filterbar" hidden>
+    <input id="q" type="search" placeholder="Search this tab…" aria-label="Search notes" autocomplete="off">
+    <span id="quick"></span>
+    <span class="spacer"></span>
+    <span id="fcount" aria-live="polite"></span>
+    <button id="fclose" title="Clear and close (Esc)">×</button>
+  </div>
   <main id="board"></main>
   <div id="grip" role="separator" aria-orientation="horizontal" title="Drag to resize, double-click to reset"></div>
   <div id="toast" hidden><span id="toast-msg"></span> <button id="undo">Undo</button></div>
 
   <div id="settings" hidden>
-    <form id="settings-form">
-      <h2>Settings</h2>
-      <div id="settings-body"></div>
-      <p id="settings-err" role="alert"></p>
-      <div class="row">
-        <button type="button" id="quit">Quit StickyDrop</button>
-        <button type="button" id="reset" title="Restore every setting to its default (notes are kept)">Reset to defaults</button>
+    <form id="settings-form" aria-labelledby="settings-title">
+      <div class="settings-top">
+        <h2 id="settings-title">Settings</h2>
         <span class="spacer"></span>
-        <button type="button" id="settings-close">Done</button>
+        <button type="button" id="settings-close" title="Close settings (Esc)">Done</button>
+      </div>
+      <div class="settings-main">
+        <nav id="settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical"></nav>
+        <div id="settings-body"></div>
+      </div>
+      <div class="settings-foot">
+        <p id="settings-err" role="alert"></p>
+        <span class="spacer"></span>
+        <button type="button" id="reset" title="Restore every setting to its default (notes, tabs and labels are kept)">Reset to defaults</button>
+        <button type="button" id="quit">Quit StickyDrop</button>
       </div>
     </form>
   </div>

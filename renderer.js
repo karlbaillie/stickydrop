@@ -1,9 +1,14 @@
 const $ = (id) => document.getElementById(id);
 const board = $('board');
 
-let notes = [];
-let columns = [];
-const COL_COLORS = ['#e57373', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8'];
+let notes = []; // every note of every tab, archived ones too; what shows is filtered (see visible())
+let tabs = []; // [{ id, name, columns }]
+let tab; // the active tab
+let columns = []; // the active tab's columns (the same array as tab.columns)
+let labels = []; // [{ id, name, color }], shared by all tabs
+let showing = 'notes'; // or 'archive': the active tab's archived notes
+const filter = { q: '', overdue: false, today: false, labels: new Set() }; // Ctrl/Cmd+F
+const COL_COLORS = ['#e57373', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8']; // also label colours
 let settings = {};
 let meta = {}; // schema, palettes, fonts from main
 let lastFocus = 0;
@@ -12,11 +17,27 @@ let viewKey; // what the notes were last drawn for: Markdown on/off + layout
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const save = () => api.saveNotes(notes);
-const viewNow = () => settings.markdown + settings.layout;
+const layoutOf = () => tab?.layout || settings.layout; // a tab's own Row/Board choice, else the default from Settings
+const viewNow = () => settings.markdown + layoutOf();
 const colOf = (n) => columns.find((c) => c.id === n.col) || columns[0];
 const colors = () => meta.palettes[settings.palette];
 const paint = (el, n) => { el.style.setProperty('--note-bg', `color-mix(in srgb, ${colors()[n.color % colors().length]} var(--pct), transparent)`); };
-const newNote = () => { const t = Date.now(); return { id: uid(), text: '', color: notes.length % 5, created: t, updated: t }; };
+const newNote = () => { const t = Date.now(); return { id: uid(), text: '', color: notes.length % 5, created: t, updated: t, tab: tab.id }; };
+const inTab = (n) => n.tab === tab.id && !n.archived;
+const filtering = () => !!(filter.q || filter.overdue || filter.today || filter.labels.size);
+function matches(n) {
+  if (filter.overdue || filter.today) {
+    const st = Time.dueState(n, new Date());
+    if (!((filter.overdue && st === 'overdue') || (filter.today && st === 'today'))) return false;
+  }
+  if (filter.labels.size && !(n.labels || []).some((id) => filter.labels.has(id))) return false;
+  if (!filter.q) return true;
+  const hay = (n.text + ' ' + (n.labels || []).map((id) => labelOf(id)?.name || '').join(' ')).toLowerCase();
+  return filter.q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+const visible = () => notes.filter((n) => inTab(n) && matches(n)); // the active tab's notes that pass the filter, in order
+const labelOf = (id) => labels.find((l) => l.id === id);
+const ensureOne = () => { if (!notes.some(inTab)) notes.push(newNote()); }; // a tab always has a note to type in
 const touch = (n) => { n.updated = Date.now(); }; // edits (not colour changes) rejuvenate a note
 const refreshAll = () => board.querySelectorAll('.note').forEach((el) => el.refresh());
 let openPop = null;
@@ -37,6 +58,7 @@ function applyStyle() {
   root.setProperty('--font', meta.fonts[settings.font]);
   root.setProperty('--fs', settings.fontSize + 'px');
   root.setProperty('--note-w', settings.noteWidth + 'px');
+  root.setProperty('--note-min', settings.noteMinWidth + 'px');
   document.documentElement.dataset.theme = settings.theme;
   document.body.dataset.valign = settings.valign;
   document.body.classList.toggle('no-anim', !settings.animate);
@@ -52,16 +74,22 @@ function applyStyle() {
 function render(focusIdx) {
   viewKey = viewNow();
   closePop();
-  const boardMode = settings.layout === 'board';
+  renderChrome();
+  if (showing === 'archive') return renderArchive();
+  const boardMode = layoutOf() === 'board';
   board.classList.toggle('cols', boardMode);
+  board.classList.remove('archive');
   const kept = new Map([...board.querySelectorAll('.col')].map((c) => [c.colData?.id, c.scrollTop])); // a drop or edit redraws: don't jump columns back to the top
-  board.replaceChildren(...(boardMode ? columns.map(colEl) : notes.map((n) => noteEl(n, notes.indexOf(n)))), ...(boardMode && columns.length < 8 ? [addColBtn()] : []));
+  const shown = visible();
+  board.replaceChildren(...(boardMode ? columns.map(colEl) : shown.map((n, i) => noteEl(n, i))));
+  if (!shown.length && filtering()) board.append(el('p', { className: 'empty', textContent: 'No notes match the filter.' }));
   board.querySelectorAll('.col').forEach((c) => { if (kept.get(c.colData.id)) c.scrollTop = kept.get(c.colData.id); });
   if (focusIdx != null) focusNote(focusIdx);
 }
 
 // a rendered note's textarea is display:none, so switch it to editing before focusing
 function focusNote(i) {
+  if (showing === 'archive') return;
   const el = [...board.querySelectorAll('.note')].find((e) => e.note === notes[i]) || board.querySelector('.note');
   if (!el) return;
   el.classList.add('editing');
@@ -87,14 +115,15 @@ function noteEl(n, i) {
     save();
   });
   const doneBtn = btn('✓', 'Mark done', () => {
+    if (!n.done && n.repeat && n.due) return completeRecurring(n); // rolls to the next date instead of finishing
     n.done = !n.done;
     touch(n);
-    if (settings.layout === 'board') { // done means "in the done column"
+    if (layoutOf() === 'board') { // done means "in the done column"
       const target = n.done ? columns.find((c) => c.done) : colOf(n).done && columns[0];
       if (target) return moveNote(n, target.id);
     }
     save();
-    if (n.done && settings.doneSink && settings.layout === 'row') { // optionally park finished notes at the end
+    if (n.done && settings.doneSink && layoutOf() === 'row') { // optionally park finished notes at the end
       notes.push(notes.splice(notes.indexOf(n), 1)[0]);
       render();
     } else el.refresh();
@@ -106,12 +135,23 @@ function noteEl(n, i) {
     el.append(openPop);
     openPop.querySelector('input').focus();
   });
-  tools.append(color, doneBtn, dueBtn);
+  const labelBtn = btn('#', 'Labels', () => {
+    if (openPop && openPop.parentNode === el) return closePop();
+    closePop();
+    openPop = labelPop(n, el);
+    el.append(openPop);
+    openPop.querySelector('input').focus();
+  });
+  labelBtn.className = 'label-btn';
+  const progress = Object.assign(document.createElement('span'), { className: 'progress' }); // checklist "2/5", in the chips row
+  tools.append(color, doneBtn, dueBtn, labelBtn);
   const grip = document.createElement('span'); // a visible cue that the header's empty space is a handle
   grip.className = 'note-grip';
   grip.textContent = '⠿';
   grip.setAttribute('aria-hidden', 'true');
-  head.append(tools, grip, btn('×', 'Delete note', () => removeNote(n)));
+  head.append(tools, grip, btn('×', 'Archive note', () => archiveNote(n)));
+  const chips = document.createElement('div'); // the note's labels; clicking one filters by it
+  chips.className = 'chips';
   head.title = 'Drag to move';
   makeDraggable(head, el, n, 'note'); // any empty part of the header is the handle, so text selection in the note still works
 
@@ -127,8 +167,16 @@ function noteEl(n, i) {
     doneBtn.setAttribute('aria-pressed', !!n.done);
     doneBtn.title = n.done ? 'Mark not done' : 'Mark done';
     dueBtn.className = 'due ' + (!n.due ? 'empty' : state === 'none' ? 'quiet' : state);
-    dueBtn.textContent = n.due ? (state === 'overdue' ? '⚠ ' : '') + Time.dueLabel(n.due, now) : '+ Due';
-    dueBtn.title = state === 'overdue' ? 'Overdue: change due date' : n.due ? 'Change due date' : 'Set due date';
+    dueBtn.textContent = n.due ? (state === 'overdue' ? '⚠ ' : '') + (n.repeat ? '↻ ' : '') + Time.dueLabel(n.due, now) : '+ Due';
+    dueBtn.title = (state === 'overdue' ? 'Overdue: change due date' : n.due ? 'Change due date' : 'Set due date') + (n.repeat ? ` (repeats ${Time.REPEATS[n.repeat].toLowerCase()})` : '');
+    const cl = Time.checklist(n.text);
+    progress.textContent = `☑ ${cl.done}/${cl.total}`;
+    progress.title = `${cl.done} of ${cl.total} tasks done`;
+    progress.classList.toggle('complete', cl.total > 0 && cl.done === cl.total);
+    const mine = (n.labels || []).map(labelOf).filter(Boolean);
+    chips.hidden = !mine.length && !cl.total;
+    chips.replaceChildren(...(cl.total ? [progress] : []), ...mine.map((l) => labelChip(l, () => toggleLabelFilter(l.id))));
+    labelBtn.classList.toggle('empty', !mine.length);
     el.style.setProperty('--age', settings.aging === 'off' ? 0 : Time.ageFraction(n.updated, now.getTime(), settings.agingDays).toFixed(3));
     foot.textContent = `Created ${Time.ago(n.created, now)} · edited ${Time.ago(n.updated, now)}`;
     foot.title = `Created ${new Date(n.created).toLocaleString()}\nEdited ${new Date(n.updated).toLocaleString()}`;
@@ -169,12 +217,12 @@ function noteEl(n, i) {
   });
   if (!settings.markdown || !n.text.trim()) el.classList.add('editing');
 
-  el.append(head, view, ta, foot);
+  el.append(head, chips, view, ta, foot);
   el.refresh();
   return el;
 }
 
-function duePop(n, el) {
+function duePop(n, noteDiv) {
   const pop = document.createElement('div');
   pop.className = 'due-pop';
   const date = Object.assign(document.createElement('input'), { type: 'date' });
@@ -185,11 +233,16 @@ function duePop(n, el) {
     date.value = n.due ? n.due.slice(0, 10) : '';
     time.value = n.due && n.due.length > 10 ? n.due.slice(11) : '';
   };
+  const repeat = el('select', {}, el('option', { value: '', textContent: 'Never' }),
+    ...Object.entries(Time.REPEATS).map(([v, t]) => el('option', { value: v, textContent: t })));
+  repeat.setAttribute('aria-label', 'Repeat');
+  repeat.onchange = () => { if (repeat.value) n.repeat = repeat.value; else delete n.repeat; save(); noteRefresh(); };
+  const noteRefresh = () => { noteDiv.refresh(); repeat.value = n.repeat || ''; repeat.disabled = !n.due; };
   const set = (v) => {
-    if (v) n.due = v; else delete n.due;
+    if (v) n.due = v; else { delete n.due; delete n.repeat; } // no date, nothing to repeat
     touch(n);
     save();
-    el.refresh();
+    noteRefresh();
     sync();
   };
   date.onchange = time.onchange = () => set(date.value ? date.value + (time.value ? 'T' + time.value : '') : null);
@@ -200,7 +253,10 @@ function duePop(n, el) {
   const when = document.createElement('div');
   when.className = 'row';
   when.append(date, time, btn('Clear', 'Remove due date', () => set(null)));
-  pop.append(quick, when);
+  const rep = Object.assign(document.createElement('label'), { className: 'row', title: 'Marking a repeating note done moves it to the next date and unticks its tasks' });
+  rep.append('Repeat', repeat);
+  pop.append(quick, when, rep);
+  noteRefresh();
   pop.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePop(); } }; // Esc closes this, not the window
   sync();
   return pop;
@@ -211,7 +267,7 @@ document.addEventListener('pointerdown', (e) => {
 setInterval(refreshAll, 30000); // due states and ages move with the clock
 
 // ---- kanban board ----------------------------------------------------------
-const saveCols = () => api.saveColumns(columns);
+const saveCols = () => saveBoard(); // columns live in their tab
 const DROP_CLASSES = ['drop-before', 'drop-after', 'drop-end', 'drop-col-before', 'drop-col-after'];
 const clearDrop = () => board.querySelectorAll(DROP_CLASSES.map((c) => '.' + c).join()).forEach((x) => x.classList.remove(...DROP_CLASSES));
 
@@ -327,13 +383,14 @@ function reorderNote(n, before, keepFocus) {
 function moveNote(n, colId, before, keepFocus) {
   const col = columns.find((c) => c.id === colId);
   if (!col) return;
+  if (col.done && !colOf(n).done && n.repeat && n.due) return completeRecurring(n); // a recurring note rolls on, it stays put
   if (col.collapsed) { delete col.collapsed; saveCols(); } // don't drop a note into a hidden column
   const from = colOf(n);
   notes.splice(notes.indexOf(n), 1);
   const at = before && before !== n ? notes.indexOf(before) : -1;
   if (at >= 0) notes.splice(at, 0, n);
   else {
-    const last = notes.findLastIndex((m) => colOf(m) === col);
+    const last = notes.findLastIndex((m) => inTab(m) && colOf(m) === col);
     notes.splice(last < 0 ? notes.length : last + 1, 0, n);
   }
   n.col = col.id;
@@ -388,7 +445,7 @@ function colMenu(c, col) {
     el('label', { className: 'row' }, 'Warn above ', limit, ' notes'));
   if (columns.length > 1) menu.append(btn('Delete column', 'Its notes move to the first column', () => {
     columns.splice(columns.indexOf(c), 1);
-    for (const n of notes) if (n.col === c.id) n.col = columns[0].id;
+    for (const n of notes) if (n.tab === tab.id && n.col === c.id) n.col = columns[0].id;
     saveCols();
     save();
     render();
@@ -403,7 +460,8 @@ function paintCol(c, col) {
 }
 
 function colEl(c) {
-  const mine = notes.filter((n) => colOf(n) === c);
+  const all = notes.filter((n) => inTab(n) && colOf(n) === c); // the count and limit ignore the filter
+  const mine = all.filter(matches);
   const nameBtn = btn(c.name, 'Rename column', () => renameCol(c, nameBtn));
   nameBtn.className = 'col-name';
   const fold = btn(c.collapsed ? '▸' : '▾', c.collapsed ? 'Expand column' : 'Collapse column', () => {
@@ -412,7 +470,7 @@ function colEl(c) {
     render();
   });
   fold.className = 'fold';
-  const count = el('span', { className: 'count', textContent: c.limit ? `${mine.length}/${c.limit}` : String(mine.length) });
+  const count = el('span', { className: 'count', textContent: c.limit ? `${all.length}/${c.limit}` : String(all.length) });
   const menuBtn = btn('⋮', 'Column options: colour, note limit, delete', () => {
     if (openPop && openPop.parentNode === col) return closePop();
     closePop();
@@ -425,7 +483,7 @@ function colEl(c) {
   const col = el('section', { className: 'col' }, head, ...mine.map((n) => noteEl(n, notes.indexOf(n))));
   col.setAttribute('aria-label', c.name);
   col.classList.toggle('collapsed', !!c.collapsed);
-  col.classList.toggle('over-limit', !!c.limit && mine.length > c.limit); // a soft warning, never blocks
+  col.classList.toggle('over-limit', !!c.limit && all.length > c.limit); // a soft warning, never blocks
   paintCol(c, col);
 
   col.colData = c;
@@ -433,33 +491,309 @@ function colEl(c) {
   return col;
 }
 
-function addColBtn() {
-  return btn('+ Column', 'Add a column', () => {
-    columns.push({ id: uid(), name: 'New column' });
-    saveCols();
-    render();
-    const names = board.querySelectorAll('.col-name');
-    names[names.length - 1].click(); // straight into naming it
-  });
-}
+// + Column lives in the toolbar (board layout only), so the board's width goes to the columns
+$('addcol').onclick = () => {
+  if (columns.length >= 8) return;
+  columns.push({ id: uid(), name: 'New column' });
+  saveCols();
+  render();
+  const names = board.querySelectorAll('.col-name');
+  names[names.length - 1].click(); // straight into naming it
+  names[names.length - 1].scrollIntoView?.({ inline: 'nearest' });
+};
 
 function addNote(colId) {
+  if (filtering()) closeFilter(); // a new note would be hidden by most filters
+  showing = 'notes';
   notes.push(colId ? { ...newNote(), col: colId } : newNote());
   save();
   render(notes.length - 1);
 }
 
-function removeNote(n) {
+// × archives a note (an empty one is simply deleted); the tab's Archive view restores or deletes it for good
+function archiveNote(n) {
+  const shown = visible();
+  const next = shown[shown.indexOf(n) + 1] || shown[shown.indexOf(n) - 1]; // focus moves to a neighbour
+  const empty = !n.text.trim();
   const idx = notes.indexOf(n);
-  const removed = notes.splice(idx, 1)[0];
-  if (!notes.length) notes.push(newNote()); // always keep one
+  if (empty) notes.splice(idx, 1); else n.archived = Date.now();
+  ensureOne();
   save();
-  render(Math.min(idx, notes.length - 1));
-  if (removed.text.trim()) toast('Note deleted', () => { // undo only matters if it had content
-    notes.splice(idx, 0, removed);
+  render(next ? notes.indexOf(next) : notes.findIndex(inTab));
+  if (!empty) toast('Note archived', () => { delete n.archived; save(); render(notes.indexOf(n)); });
+}
+
+// Recurring note marked done: it stays open, its due date moves to the next occurrence and its ticked tasks reset
+function completeRecurring(n) {
+  const before = { due: n.due, text: n.text, updated: n.updated };
+  n.due = Time.nextDue(n.due, n.repeat, new Date());
+  n.text = n.text.replace(/^(\s*(?:[-*+]|\d+[.)])\s+\[)[xX](\])/gm, '$1 $2');
+  touch(n);
+  save();
+  render(notes.indexOf(n));
+  toast(`Done · next due ${Time.dueLabel(n.due, new Date())}`, () => { Object.assign(n, before); save(); render(notes.indexOf(n)); });
+}
+
+// ---- tabs ------------------------------------------------------------------
+const saveBoard = () => api.saveBoard({ tabs, activeTab: tab.id, labels });
+function switchTab(t, focusIdx) {
+  if (!t) return;
+  tab = t;
+  columns = t.columns;
+  showing = 'notes';
+  ensureOne();
+  saveBoard();
+  render(focusIdx ?? notes.findIndex(inTab));
+}
+function addTab() {
+  if (tabs.length >= 12) return;
+  // no layout of its own: it starts on the Default layout setting, not the current tab's
+  const t = { id: uid(), name: `Tab ${tabs.length + 1}`, columns: [{ id: 'todo', name: 'To do' }, { id: 'doing', name: 'Doing' }, { id: 'done', name: 'Done', done: true }] };
+  tabs.push(t);
+  switchTab(t);
+  renameTab(t);
+}
+function renameTab(t) {
+  const b = [...$('tabs').querySelectorAll('.tab')].find((x) => x.tabData === t);
+  if (!b) return;
+  const input = el('input', { value: t.name, maxLength: 24, className: 'tab-name', ariaLabel: 'Tab name' });
+  let done = false;
+  const finish = (ok) => {
+    if (done) return;
+    done = true;
+    if (ok && input.value.trim()) t.name = input.value.trim();
+    saveBoard();
+    renderChrome();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+  b.replaceWith(input);
+  input.focus();
+  input.select();
+}
+function deleteTab(t) {
+  if (tabs.length < 2) return;
+  const at = tabs.indexOf(t);
+  const gone = notes.filter((n) => n.tab === t.id);
+  tabs.splice(at, 1);
+  notes = notes.filter((n) => n.tab !== t.id);
+  save();
+  switchTab(tabs[Math.min(at, tabs.length - 1)]);
+  toast(`Tab "${t.name}" deleted`, () => { tabs.splice(at, 0, t); notes.push(...gone); save(); switchTab(t); });
+}
+// a note dropped on another tab moves there, into the same-named column slot if that tab has it, else its first column
+function moveToTab(n, t) {
+  if (t === tab) return;
+  const from = { tab: n.tab, col: n.col };
+  n.tab = t.id;
+  if (!t.columns.some((c) => c.id === n.col)) n.col = t.columns[0].id;
+  ensureOne();
+  save();
+  render(notes.findIndex(inTab));
+  toast(`Moved to "${t.name}"`, () => { Object.assign(n, from); save(); switchTab(tabs.find((x) => x.id === from.tab) || tab, notes.indexOf(n)); });
+}
+function tabBtn(t, i) {
+  const b = btn(t.name, `${t.name} (${navigator.platform.startsWith('Mac') ? 'Cmd' : 'Ctrl'}+${i + 1}) · double-click to rename`, () => (t === tab ? null : switchTab(t)));
+  b.className = 'tab';
+  b.tabData = t;
+  b.setAttribute('aria-current', t === tab);
+  b.ondblclick = () => renameTab(t);
+  // drop a dragged note on a tab to move it there
+  b.ondragover = (e) => { if (drag?.kind === 'note' && t !== tab) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; b.classList.add('drop-tab'); } };
+  b.ondragleave = () => b.classList.remove('drop-tab');
+  b.ondrop = (e) => { if (drag?.kind !== 'note') return; e.preventDefault(); const n = drag.item; endDrag(); b.classList.remove('drop-tab'); moveToTab(n, t); };
+  if (t !== tab || tabs.length < 2) return b;
+  const x = btn('×', `Delete tab "${t.name}" and its notes (undo for a few seconds)`, () => deleteTab(t));
+  x.className = 'tab-x';
+  return el('span', { className: 'tab-wrap' }, b, x);
+}
+
+// ---- labels ----------------------------------------------------------------
+function labelChip(l, onclick) {
+  const c = btn(l.name, `Label: ${l.name} (click to filter)`, onclick);
+  c.className = 'chip';
+  c.style.setProperty('--chip', COL_COLORS[l.color]);
+  c.classList.toggle('on', filter.labels.has(l.id));
+  return c;
+}
+function newLabel(name) {
+  const l = { id: uid(), name: name.trim().slice(0, 24), color: labels.length % COL_COLORS.length };
+  labels.push(l);
+  saveBoard();
+  return l;
+}
+function labelPop(n, noteEl) {
+  const pop = el('div', { className: 'due-pop label-pop' });
+  const toggle = (l, on) => {
+    n.labels = (n.labels || []).filter((id) => id !== l.id);
+    if (on) n.labels.push(l.id);
+    if (!n.labels.length) delete n.labels;
     save();
-    render(idx);
+    noteEl.refresh();
+  };
+  const list = el('div', { className: 'label-list' }, ...labels.map((l) => {
+    const cb = el('input', { type: 'checkbox', checked: (n.labels || []).includes(l.id) });
+    cb.onchange = () => toggle(l, cb.checked);
+    return el('label', { className: 'row' }, cb, el('span', { className: 'dot', style: `--chip:${COL_COLORS[l.color]}` }), l.name);
+  }));
+  const input = el('input', { type: 'text', placeholder: labels.length ? 'New label…' : 'Name a label…', maxLength: 24, ariaLabel: 'New label' });
+  input.onkeydown = (e) => {
+    if (e.key !== 'Enter' || !input.value.trim()) return;
+    e.preventDefault();
+    const existing = labels.find((l) => l.name.toLowerCase() === input.value.trim().toLowerCase());
+    toggle(existing || (labels.length < 24 ? newLabel(input.value) : null) || labels[0], true);
+    closePop();
+  };
+  pop.append(list, input, el('p', { className: 'hint', textContent: 'Rename, recolour or delete labels in Settings.' }));
+  pop.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePop(); } };
+  return pop;
+}
+function labelSettings() { // Settings → Labels: add, rename, recolour, delete
+  const redraw = () => $('labels-set').replaceWith(labelSettings());
+  const rows = labels.map((l) => {
+    const sw = btn('', 'Change colour', () => { l.color = (l.color + 1) % COL_COLORS.length; sw.style.background = COL_COLORS[l.color]; saveBoard(); render(); });
+    sw.className = 'swatch';
+    sw.style.background = COL_COLORS[l.color];
+    const name = el('input', { type: 'text', value: l.name, maxLength: 24, ariaLabel: 'Label name' });
+    name.onchange = () => { if (name.value.trim()) { l.name = name.value.trim(); saveBoard(); render(); } else name.value = l.name; };
+    const used = notes.filter((n) => n.labels?.includes(l.id)).length;
+    const del = btn('×', `Delete label "${l.name}" (removes it from every note)`, () => {
+      labels.splice(labels.indexOf(l), 1);
+      for (const n of notes) if (n.labels) { n.labels = n.labels.filter((id) => id !== l.id); if (!n.labels.length) delete n.labels; }
+      filter.labels.delete(l.id);
+      save();
+      saveBoard();
+      render();
+      redraw();
+    });
+    del.className = 'icon';
+    return el('div', { className: 'setting label-row' }, sw, name, el('small', { textContent: used === 1 ? '1 note' : `${used} notes` }), del);
   });
+  const add = el('input', { type: 'text', placeholder: 'New label…', maxLength: 24, ariaLabel: 'New label' });
+  add.onkeydown = (e) => {
+    if (e.key !== 'Enter' || !add.value.trim() || labels.length >= 24) return;
+    e.preventDefault();
+    if (!labels.some((l) => l.name.toLowerCase() === add.value.trim().toLowerCase())) { newLabel(add.value); render(); }
+    redraw();
+    $('labels-set').querySelector('input[aria-label="New label"]').focus();
+  };
+  return el('section', { className: 'settings-section', id: 'labels-set' },
+    el('h3', { textContent: 'Labels' }),
+    el('p', { className: 'section-hint', textContent: 'Shared by every tab. Click a swatch to recolour, edit a name to rename. Tick labels on a note with its # button.' }),
+    ...rows,
+    el('div', { className: 'setting label-row' }, add, el('small', { textContent: 'Enter to add' })));
+}
+
+// ---- filter (Ctrl/Cmd+F) ---------------------------------------------------
+function openFilter() {
+  $('filterbar').hidden = false;
+  $('q').focus();
+  $('q').select();
+  renderChrome();
+}
+function closeFilter() {
+  Object.assign(filter, { q: '', overdue: false, today: false });
+  filter.labels.clear();
+  $('q').value = '';
+  $('filterbar').hidden = true;
+  render(lastFocus);
+}
+function toggleLabelFilter(id) {
+  if (filter.labels.has(id)) filter.labels.delete(id); else filter.labels.add(id);
+  $('filterbar').hidden = false;
+  render();
+}
+$('q').oninput = () => { filter.q = $('q').value.trim(); render(); };
+$('q').onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeFilter(); } };
+$('fclose').onclick = closeFilter;
+$('find').onclick = () => ($('filterbar').hidden ? openFilter() : closeFilter());
+
+// ---- sort (one-off: rearranges the tab's notes, within each column on the board) ----
+const SORTS = {
+  due: ['Due date', (a, b) => (Time.parseDue(a.due) ?? Infinity) - (Time.parseDue(b.due) ?? Infinity)],
+  edited: ['Recently edited', (a, b) => b.updated - a.updated],
+  created: ['Oldest first', (a, b) => a.created - b.created],
+  color: ['Colour', (a, b) => a.color - b.color],
+  label: ['Label', (a, b) => labelRank(a) - labelRank(b)],
+};
+const labelRank = (n) => Math.min(...(n.labels || []).map((id) => labels.findIndex((l) => l.id === id)).filter((i) => i >= 0), Infinity);
+function sortNotes(key) {
+  const [name, cmp] = SORTS[key];
+  const prev = notes.slice();
+  const mine = notes.filter(inTab);
+  const slots = mine.map((n) => notes.indexOf(n));
+  [...mine].sort(cmp).forEach((n, i) => { notes[slots[i]] = n; }); // stable; other tabs and archived notes stay put
+  save();
+  render();
+  toast(`Sorted by ${name.toLowerCase()}`, () => { notes = prev; save(); render(); });
+}
+$('sort').onclick = () => {
+  if (openPop?.id === 'sort-menu') return closePop();
+  closePop();
+  openPop = el('div', { className: 'due-pop', id: 'sort-menu' }, el('span', { className: 'hint', textContent: 'Sort this tab by' }),
+    ...Object.entries(SORTS).map(([k, [name]]) => btn(name, `Sort by ${name.toLowerCase()} (once; drag to adjust)`, () => { closePop(); sortNotes(k); })));
+  openPop.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePop(); } };
+  $('app').append(openPop);
+  const r = $('sort').getBoundingClientRect();
+  Object.assign(openPop.style, { position: 'fixed', top: r.bottom + 4 + 'px', left: Math.max(4, r.right - 180) + 'px' });
+  openPop.querySelector('button').focus();
+};
+
+// ---- archive view ----------------------------------------------------------
+$('archive').onclick = () => { showing = showing === 'archive' ? 'notes' : 'archive'; render(showing === 'notes' ? lastFocus : undefined); };
+function armed(b, label, run) { // two clicks for anything that can't be undone
+  b.onclick = () => {
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Click again'; setTimeout(() => { delete b.dataset.armed; b.textContent = label; }, 4000); return; }
+    run();
+  };
+  return b;
+}
+function renderArchive() {
+  board.classList.remove('cols');
+  board.classList.add('archive');
+  const gone = notes.filter((n) => n.tab === tab.id && n.archived).sort((a, b) => b.archived - a.archived);
+  const now = new Date();
+  const cards = gone.map((n) => el('section', { className: 'note archived-note' },
+    el('div', { className: 'view' }, renderMarkdown(n.text)),
+    el('div', { className: 'foot row' }, `Archived ${Time.ago(n.archived, now)}`, el('span', { className: 'spacer' }),
+      btn('Restore', 'Put it back on the board', () => { delete n.archived; save(); render(); }),
+      armed(btn('Delete', 'Delete for good'), 'Delete', () => { notes.splice(notes.indexOf(n), 1); save(); render(); }))));
+  cards.forEach((c, i) => paint(c, gone[i]));
+  const head = el('div', { className: 'archive-head' }, el('strong', { textContent: `Archive: ${tab.name}` }),
+    el('span', { className: 'spacer' }),
+    ...(gone.length ? [armed(btn('Empty archive', 'Delete every archived note in this tab for good'), 'Empty archive', () => { notes = notes.filter((n) => !gone.includes(n)); save(); render(); })] : []),
+    btn('Back to notes', 'Close the archive (Esc)', () => { showing = 'notes'; render(lastFocus); }));
+  board.replaceChildren(head, ...(cards.length ? cards : [el('p', { className: 'empty', textContent: 'Nothing archived in this tab. × on a note archives it.' })]));
+}
+
+// the toolbar's Layout button: this tab only (other tabs keep theirs)
+$('layout').onclick = () => {
+  tab.layout = layoutOf() === 'board' ? 'row' : 'board';
+  saveBoard();
+  render(lastFocus);
+};
+
+// toolbar state: tabs, layout, archive count, filter chips and count
+function renderChrome() {
+  $('layout').textContent = layoutOf() === 'board' ? 'Layout: Board' : 'Layout: Row';
+  $('addcol').hidden = layoutOf() !== 'board' || showing === 'archive' || columns.length >= 8;
+  $('layout').title = `Switch this tab to ${layoutOf() === 'board' ? 'a row of notes' : 'a Kanban board'} (other tabs keep their own layout)`;
+  $('tabs').replaceChildren(...tabs.map(tabBtn), ...(tabs.length < 12 ? [Object.assign(btn('+', 'New tab', addTab), { className: 'tab-add' })] : []));
+  const archived = notes.filter((n) => n.tab === tab.id && n.archived).length;
+  $('archive').textContent = archived ? `Archive (${archived})` : 'Archive';
+  $('archive').setAttribute('aria-pressed', showing === 'archive');
+  $('find').setAttribute('aria-pressed', !$('filterbar').hidden);
+  const quick = (key, name) => {
+    const b = btn(name, `Only notes ${name.toLowerCase()}`, () => { filter[key] = !filter[key]; render(); });
+    b.className = 'chip quick' + (filter[key] ? ' on' : '');
+    return b;
+  };
+  $('quick').replaceChildren(quick('overdue', 'Overdue'), quick('today', 'Due today'), ...labels.map((l) => labelChip(l, () => toggleLabelFilter(l.id))));
+  const total = notes.filter(inTab).length;
+  $('fcount').textContent = filtering() ? `${visible().length} of ${total}` : '';
 }
 
 function toast(msg, onUndo) {
@@ -502,22 +836,28 @@ const el = (tag, props = {}, ...kids) => {
   return e;
 };
 
+// one settings row: label and hint on the left, the control on the right
+function settingRow(forId, label, hint, control, value) {
+  const text = el('div', { className: 'setting-text' }, el('label', { htmlFor: forId, textContent: label }), ...(hint ? [el('small', { textContent: hint })] : []));
+  return el('div', { className: 'setting' }, text, el('div', { className: 'setting-control' }, ...(value ? [value] : []), control));
+}
+
 function control(key, spec) {
   const id = 's-' + key;
   if (spec.type === 'check') {
-    const input = el('input', { type: 'checkbox', id });
+    const input = el('input', { type: 'checkbox', id, className: 'switch' });
     input.onchange = () => apply({ [key]: input.checked });
-    return el('label', { className: 'check' }, input, spec.label);
+    return settingRow(id, spec.label, spec.hint, input);
   }
   if (spec.type === 'range') {
     const out = el('output', { id: id + '-out' });
     const input = el('input', { type: 'range', id, min: spec.min, max: spec.max, step: spec.step });
     input.oninput = () => { out.textContent = input.value + spec.unit; apply({ [key]: +input.value }); };
-    return el('label', {}, el('span', {}, spec.label + ': ', out), input);
+    return settingRow(id, spec.label, spec.hint, input, out);
   }
   const select = el('select', { id }, ...Object.entries(spec.options).map(([v, t]) => el('option', { value: v, textContent: t })));
   select.onchange = () => apply({ [key]: select.value });
-  return el('label', {}, spec.label, select);
+  return settingRow(id, spec.label, spec.hint, select);
 }
 
 function hotkeyControl() {
@@ -532,7 +872,7 @@ function hotkeyControl() {
     const accel = toAccel(e);
     if (accel) { hk.blur(); apply({ hotkey: accel }); }
   };
-  return el('label', {}, 'Shortcut', hk);
+  return settingRow('hotkey', 'Show / hide shortcut', 'Works from any app. Click, then press the new keys', hk);
 }
 
 function syncControls() { // reflect settings in the form, without fighting a control the user is dragging
@@ -547,18 +887,53 @@ function syncControls() { // reflect settings in the form, without fighting a co
   if (hk && !hk.classList.contains('capturing')) hk.textContent = settings.hotkey;
 }
 
+// Settings: a tab per group (General, Window, Appearance, Notes, Reminders) plus Labels; sections inside each.
+// Built from the schema main sends, so a new setting only needs its group and section there.
+let settingsTab = 'General';
+function showSettingsTab(name, focus) {
+  settingsTab = name;
+  for (const b of $('settings-nav').children) b.setAttribute('aria-selected', b.dataset.tab === name);
+  for (const p of $('settings-body').children) p.hidden = p.dataset.tab !== name;
+  $('settings-body').scrollTop = 0;
+  if (focus) $('settings-nav').querySelector('[aria-selected="true"]').focus();
+}
 async function openSettings() {
   meta.schema = (await api.load()).schema; // monitor list may have changed
-  const groups = {};
-  for (const [key, spec] of Object.entries(meta.schema)) (groups[spec.group] ||= []).push(control(key, spec));
-  $('settings-body').replaceChildren(...Object.entries(groups).map(([name, controls]) =>
-    el('fieldset', {}, el('legend', { textContent: name }), ...(name === 'General' ? [hotkeyControl()] : []), ...controls)));
+  const groups = {}; // group -> section -> rows
+  for (const [key, spec] of Object.entries(meta.schema)) ((groups[spec.group] ||= {})[spec.section] ||= []).push(control(key, spec));
+  groups.General.Shortcut.unshift(hotkeyControl());
+  const panel = (name, ...kids) => {
+    const p = el('div', { className: 'settings-panel', role: 'tabpanel', ariaLabel: name }, ...kids);
+    p.dataset.tab = name;
+    return p;
+  };
+  const panels = [
+    ...Object.entries(groups).map(([name, sections]) => panel(name,
+      ...Object.entries(sections).map(([sec, rows]) => el('section', { className: 'settings-section' }, el('h3', { textContent: sec }), ...rows)))),
+    panel('Labels', labelSettings()),
+  ];
+  $('settings-body').replaceChildren(...panels);
+  $('settings-nav').replaceChildren(...panels.map((p) => {
+    const b = btn(p.dataset.tab, `${p.dataset.tab} settings`, () => showSettingsTab(p.dataset.tab));
+    b.dataset.tab = p.dataset.tab;
+    b.setAttribute('role', 'tab');
+    return b;
+  }));
+  if (!panels.some((p) => p.dataset.tab === settingsTab)) settingsTab = 'General';
   syncControls();
   $('settings-err').textContent = '';
   disarmReset();
   $('settings').hidden = false;
-  $('hotkey').focus();
+  showSettingsTab(settingsTab, true);
 }
+$('settings-nav').onkeydown = (e) => { // arrow keys move between settings tabs
+  const tabsEls = [...$('settings-nav').children];
+  const i = tabsEls.findIndex((b) => b.dataset.tab === settingsTab);
+  const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+  if (!d) return;
+  e.preventDefault();
+  showSettingsTab(tabsEls[(i + d + tabsEls.length) % tabsEls.length].dataset.tab, true);
+};
 
 let resetTimer;
 $('reset').onclick = async (e) => { // two clicks: no modal dialog to block the window
@@ -598,8 +973,9 @@ $('grip').onpointerdown = (e) => {
     h = h0 + sign * (m.screenY - y0);
     if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; api.resizeHeight(h, false); }); }
   };
-  grip.onpointerup = async () => {
+  grip.onpointerup = async (u) => {
     grip.onpointermove = grip.onpointerup = null;
+    h = h0 + sign * (u.screenY - y0); // where it was released, even if the last move was coalesced away
     const r = await api.resizeHeight(h, true);
     settings = r.settings;
     syncControls();
@@ -617,22 +993,28 @@ $('pin').onclick = (e) => {
 
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape') { // closes the innermost thing first; with nothing open it hides the window
     if (!$('settings').hidden) $('settings').hidden = true;
+    else if (openPop) closePop();
+    else if (showing === 'archive') { showing = 'notes'; render(lastFocus); }
+    else if (!$('filterbar').hidden) closeFilter();
     else api.hide();
   } else if (mod && e.key === 'n') { e.preventDefault(); addNote(); }
+  else if (mod && e.key === 'f') { e.preventDefault(); openFilter(); }
+  else if (mod && /^[1-9]$/.test(e.key) && !e.altKey) { e.preventDefault(); switchTab(tabs[+e.key - 1]); }
   else if (e.altKey && e.key.startsWith('Arrow')) { // move the focused note
     const n = document.activeElement.closest?.('.note')?.note;
     if (!n) return;
     e.preventDefault();
-    if (settings.layout !== 'board') { // row: Alt+Left/Up earlier, Alt+Right/Down later
-      const i = notes.indexOf(n), back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
-      if (back && i > 0) reorderNote(n, notes[i - 1], true);
-      else if (!back && i < notes.length - 1) reorderNote(n, notes[i + 2], true);
+    const shown = visible();
+    if (layoutOf() !== 'board') { // row: Alt+Left/Up earlier, Alt+Right/Down later
+      const i = shown.indexOf(n), back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+      if (back && i > 0) reorderNote(n, shown[i - 1], true);
+      else if (!back && i < shown.length - 1) reorderNote(n, shown[i + 2], true);
       return;
     }
     const col = columns.indexOf(colOf(n));
-    const mine = notes.filter((m) => colOf(m) === colOf(n));
+    const mine = shown.filter((m) => colOf(m) === colOf(n));
     const pos = mine.indexOf(n);
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const to = columns[col + (e.key === 'ArrowLeft' ? -1 : 1)];
@@ -652,16 +1034,34 @@ api.onShow(() => {
   if ($('settings').hidden) focusNote(lastFocus);
 });
 
+// a tray item or a reminder was clicked: go to that note's tab and focus it
+api.onFocusNote((id) => {
+  const n = notes.find((x) => x.id === id && !x.archived);
+  if (!n) return;
+  $('settings').hidden = true;
+  if (!matches(n)) closeFilter();
+  switchTab(tabs.find((t) => t.id === n.tab) || tab, notes.indexOf(n));
+});
+
 (async () => {
   const d = await api.load();
-  ({ settings, notes, columns } = d);
+  ({ settings, notes, tabs, labels } = d);
+  tab = tabs.find((t) => t.id === d.activeTab) || tabs[0];
+  columns = tab.columns;
   meta = d;
+  // notes from before tabs belong to the first; labels that no longer exist are dropped
+  for (const n of notes) {
+    if (!tabs.some((t) => t.id === n.tab)) n.tab = tabs[0].id;
+    if (n.labels) { n.labels = n.labels.filter(labelOf); if (!n.labels.length) delete n.labels; }
+    if (n.archived != null && !Number.isFinite(n.archived)) delete n.archived;
+    if (n.repeat && !Time.REPEATS[n.repeat]) delete n.repeat;
+  }
   // older versions stored a hex colour; now an index into the chosen palette
   const classic = d.palettes.classic;
   for (const n of notes) if (typeof n.color !== 'number') n.color = Math.max(0, classic.indexOf(n.color));
   for (const n of notes) { n.created ??= Date.now(); n.updated ??= n.created; } // notes from before dates existed start fresh
-  if (!notes.length) notes = [newNote()];
-  render(0);
+  ensureOne();
+  render(notes.findIndex(inTab));
   applyStyle();
   save(); // persist the migration
 })();
