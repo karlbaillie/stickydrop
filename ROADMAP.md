@@ -42,5 +42,5 @@ Pixel offsets for the window position (the alignment options cover it), backgrou
 
 ## Known gaps in what exists
 - Transparency below 100% opacity is untested visually (depends on the compositor).
-- macOS and Windows paths are untested; `.github/workflows/build.yml` has never run.
+- Windows has only been exercised by the end-to-end suite on CI, never by hand.
 - The in-app global shortcut is unreliable on Wayland; use the `--toggle` system shortcut (see README).

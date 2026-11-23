@@ -32,7 +32,7 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 - Drops from the top or the bottom, aligned left, centre or right, with an optional slide animation.
 - Hides when focus is lost, so clicking back into your meeting dismisses it. **Pin** keeps it open.
 - If it is open but unfocused, the hotkey *refocuses* it instead of hiding it (as Guake's "refocus" option does).
-- Stays on top of other windows (set to appear above full-screen apps on macOS, which is untested), appears on every workspace, lives in the tray, never in the taskbar.
+- Stays on top of other windows (on macOS also above full-screen apps), appears on every workspace, lives in the tray, never in the taskbar.
 - Single instance: launching it again just shows the window. `stickydrop --toggle` toggles a running instance, which is how you bind a system shortcut on Wayland.
 
 **Notes**
@@ -214,8 +214,8 @@ Starting the command also launches the app if it isn't running, so the shortcut 
 |---|---|
 | Ubuntu 24.04+ on GNOME/Wayland (via XWayland) | **Developed and tested here**: end-to-end suite, packaging (`.deb`, AppImage), hotkey via `--toggle` |
 | Linux on an X11 session | Expected to work, including the built-in global hotkey; not tested |
-| macOS 26 (Apple Silicon) | **Partly tested**: notes, Kanban and row drag-and-drop with Stay on top, by hand. Full-screen apps and the e2e suite on CI are not |
-| Windows | **Untested.** Same caveat |
+| macOS 26 (Apple Silicon) | **Tested**: end-to-end suite (locally and on CI), plus by hand: drag-and-drop in both layouts with Stay on top, showing over full-screen apps |
+| Windows | **End-to-end suite passes on CI**; not tried by hand |
 
 ## Development
 
