@@ -435,14 +435,15 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await app.close();
 
   // ---- auto-scroll while dragging near an edge ----
-  // a narrow window with 8 columns (most off-screen) and a tall first column
+  // a narrow window with 8 columns (most off-screen) and a tall first column. Drags start in the first column: on a small
+  // screen (CI's macOS is 1024px wide) even the second column can be partly outside the window.
   const cols8 = Array.from({ length: 8 }, (_, i) => ({ id: 'c' + i, name: 'Col ' + i }));
   const tall = Array.from({ length: 8 }, (_, i) => ({ id: 't' + i, text: 'T' + i, color: 0, col: 'c0' }));
-  fs.writeFileSync(dataFile, JSON.stringify({ settings: { layout: 'board', widthPct: 40 }, columns: cols8, notes: [...tall, { id: 'm', text: 'M', color: 1, col: 'c1' }] }));
+  fs.writeFileSync(dataFile, JSON.stringify({ settings: { layout: 'board', widthPct: 40 }, columns: cols8, notes: [{ id: 'm', text: 'M', color: 1, col: 'c0' }, ...tall] }));
   app = await launch(); page = await app.firstWindow(); await page.waitForSelector('.col .note');
   const scrollOf = (sel, axis) => page.locator(sel).first().evaluate((e, a) => e[a], axis);
   const boardBox = await page.locator('#board').boundingBox();
-  const mHead = await page.locator('.col').nth(1).locator('.note-grip').boundingBox();
+  const mHead = await page.locator('.col').first().locator('.note-grip').first().boundingBox();
   await page.mouse.move(mHead.x + mHead.width / 2, mHead.y + mHead.height / 2);
   await page.mouse.down();
   await page.mouse.move(boardBox.x + boardBox.width - 4, boardBox.y + 60, { steps: 10 }); // rest at the right edge
