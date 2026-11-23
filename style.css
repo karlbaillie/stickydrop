@@ -51,7 +51,8 @@ input.col-name { font: inherit; font-weight: 600; width: 9em; }
 .col-head .count { font-size: 12px; color: var(--muted); }
 #board:not(.cols) > .note { max-width: var(--note-w, 420px); } /* a lone note stays note-sized instead of stretching across the screen */
 .col > .note { flex: none; min-height: 150px; min-width: 0; }
-.note-head[draggable="true"] { cursor: grab; }
+#board.cols .note-head, .col-head { cursor: grab; touch-action: none; user-select: none; }
+.ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .85; margin: 0; box-shadow: 0 8px 24px #000a; }
 .note.dragging { opacity: .4; }
 .drop-before { box-shadow: 0 -4px 0 0 var(--accent), 0 2px 8px #0008; }
 .col.drop-end { box-shadow: inset 0 -4px 0 0 var(--accent); }
@@ -59,7 +60,6 @@ input.col-name { font: inherit; font-weight: 600; width: 9em; }
 .col.colored { border-top: 4px solid var(--col-accent); }
 .col.over-limit { outline: 2px solid #d32f2f88; }
 .col.over-limit .count { color: #ff6b6b; font-weight: 700; }
-.col-head[draggable="true"] { cursor: grab; }
 .col-head .fold { background: none; border: 0; padding: 2px 4px; }
 .col { position: relative; }
 .col > .col-menu.due-pop { top: 40px; right: 6px; left: auto; width: max-content; }

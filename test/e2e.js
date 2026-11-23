@@ -375,6 +375,26 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.equal(saved[2].color, 3); // swatch 0 is "no colour"
   assert.equal(saved[0].limit, 1);
 
+  // a slow, real-mouse-style drag: ghost follows, Esc cancels without hiding the window; releasing elsewhere moves the note
+  const hb = await page.locator('.col').nth(0).locator('.note').first().locator('.note-head').boundingBox();
+  const tb = await page.locator('.col').nth(1).boundingBox();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width / 2 + 40, hb.y + 40, { steps: 5 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + 120, { steps: 10 });
+  assert.equal(await page.locator('.ghost').count(), 1, 'a ghost follows the pointer');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  assert.equal(await page.locator('.ghost').count(), 0, 'Esc removes the ghost');
+  assert(await visible(app), 'Esc cancels the drag without hiding the window');
+  assert.deepEqual(await inCol(0), ['A', 'B'], 'a cancelled drag moves nothing');
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + 120, { steps: 10 });
+  await page.mouse.up();
+  assert.deepEqual(await inCol(0), ['B'], 'a stepwise drag moves the note out');
+  assert.deepEqual(await inCol(1), ['A'], 'and into the column it was released over');
+
   // persists across restart; switching to Row keeps every note; reset keeps columns and notes
   await page.waitForTimeout(500);
   await app.close();

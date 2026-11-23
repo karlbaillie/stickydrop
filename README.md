@@ -250,7 +250,7 @@ just dist          # build installers for this OS
 - **Opacity below 100%** relies on the compositor honouring a transparent window. It is set and applied, but I haven't
   seen it blend with a desktop on any platform yet.
 - **Wayland**: the in-app global hotkey is unreliable; use the `--toggle` system shortcut (above).
-- **Touch screens**: board drag and drop is untested on touch hardware; use `Alt+Arrows` or the ✓ button there.
+- **Touch screens**: dragging uses pointer events, so it should work by touch, but it has only been tested with a mouse.
 - **Markdown** has no tables, images or raw HTML (HTML is shown as text).
 - **One set of notes**: no separate boards or tabs, search, labels, archive, reminders or sync yet. See [ROADMAP.md](ROADMAP.md).
 - Notes that predate the date features were treated as created and edited at first launch after the upgrade.
