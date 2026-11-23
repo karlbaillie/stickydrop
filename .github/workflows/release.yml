@@ -1,5 +1,6 @@
 # Push a tag like v0.2.0 (see `just release`): tests, builds all platforms, publishes a GitHub Release.
-# If the SNAPCRAFT_STORE_CREDENTIALS secret exists, the snap is also uploaded to the Snap Store (stable).
+# A tag with a pre-release suffix (v0.2.0-alpha.1, -beta, -rc...) is published as a GitHub pre-release.
+# If the SNAPCRAFT_STORE_CREDENTIALS secret exists, the snap is also uploaded to the Snap Store: stable, or edge for a pre-release.
 name: release
 on:
   push:
@@ -40,8 +41,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { path: out, merge-multiple: true }
-      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
         env:
           GH_TOKEN: ${{ github.token }}
       - if: env.SNAPCRAFT_STORE_CREDENTIALS != ''
-        run: sudo snap install snapcraft --classic && snapcraft upload --release=stable out/*.snap
+        run: sudo snap install snapcraft --classic && snapcraft upload --release=${{ contains(github.ref_name, '-') && 'edge' || 'stable' }} out/*.snap
