@@ -434,6 +434,38 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.deepEqual(await colNames(), ['To do', 'Doing', 'Done'], 'invalid columns fall back to defaults');
   await app.close();
 
+  // ---- auto-scroll while dragging near an edge ----
+  // a narrow window with 8 columns (most off-screen) and a tall first column
+  const cols8 = Array.from({ length: 8 }, (_, i) => ({ id: 'c' + i, name: 'Col ' + i }));
+  const tall = Array.from({ length: 8 }, (_, i) => ({ id: 't' + i, text: 'T' + i, color: 0, col: 'c0' }));
+  fs.writeFileSync(dataFile, JSON.stringify({ settings: { layout: 'board', widthPct: 40 }, columns: cols8, notes: [...tall, { id: 'm', text: 'M', color: 1, col: 'c1' }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('.col .note');
+  const scrollOf = (sel, axis) => page.locator(sel).first().evaluate((e, a) => e[a], axis);
+  const boardBox = await page.locator('#board').boundingBox();
+  const mHead = await page.locator('.col').nth(1).locator('.note-grip').boundingBox();
+  await page.mouse.move(mHead.x + mHead.width / 2, mHead.y + mHead.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(boardBox.x + boardBox.width - 4, boardBox.y + 60, { steps: 10 }); // rest at the right edge
+  await page.waitForTimeout(1500);
+  assert(await scrollOf('#board', 'scrollLeft') > 0, 'resting at the right edge scrolls the board sideways');
+  const lastCol = await page.locator('.col').last().boundingBox();
+  assert(lastCol.x + lastCol.width <= boardBox.x + boardBox.width + 1, 'until the last column is in view');
+  await page.mouse.move(lastCol.x + lastCol.width / 2, lastCol.y + 80, { steps: 5 });
+  await page.mouse.up();
+  assert.deepEqual(await page.locator('.col').last().locator('textarea').evaluateAll((t) => t.map((x) => x.value)), ['M'], 'the note drops into the column scrolled into view');
+  // up and down inside a tall column
+  await page.evaluate(() => { board.scrollLeft = 0; });
+  const t0Head = await page.locator('.col').first().locator('.note-grip').first().boundingBox();
+  const c0 = await page.locator('.col').first().boundingBox();
+  await page.mouse.move(t0Head.x + t0Head.width / 2, t0Head.y + t0Head.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(c0.x + c0.width / 2, c0.y + c0.height - 4, { steps: 10 }); // rest at the column's bottom edge
+  await page.waitForTimeout(800);
+  assert(await scrollOf('.col', 'scrollTop') > 0, 'resting at a column\'s bottom edge scrolls it down');
+  await page.mouse.up(); // drop it at the bottom: the redraw keeps the column where it was scrolled to
+  assert(await scrollOf('.col', 'scrollTop') > 0, 'a drop does not jump the column back to the top');
+  await app.close();
+
   // ---- drag the edge to resize; the height is remembered ----
   fs.writeFileSync(dataFile, JSON.stringify({ notes: [{ id: 'x', text: 'hi', color: 0 }] }));
   app = await launch(); page = await app.firstWindow(); await page.waitForSelector('#grip');

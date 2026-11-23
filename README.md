@@ -52,7 +52,7 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 **Kanban board (optional)**
 - Settings → Notes → **Layout: Kanban board** turns the row of notes into columns. It is the same notes, so you can switch back and forth freely; the default stays a plain row.
 - Starts with *To do / Doing / Done*. Click a column name to rename it, **+ Column** adds one (up to 8), **×** deletes one (its notes move to the first column), **+** adds a note to that column.
-- Drag a note by its header (any empty part of it) to move it between or within columns, or use `Alt+←/→` (change column) and `Alt+↑/↓` (reorder) on the focused note.
+- Drag a note by its header (any empty part of it) to move it between or within columns (hold it near an edge to scroll to an off-screen column or further down a long one), or use `Alt+←/→` (change column) and `Alt+↑/↓` (reorder) on the focused note.
 - Each column's **⋮** menu sets a colour, an optional note limit (a soft warning: the count turns red, nothing is blocked) and delete. **▾** collapses a column to a thin strip. Drag a column header to reorder columns.
 - Moving a note into the done column marks it done, moving it out clears that; the ✓ button does the same move. Moving is not an edit, so it doesn't reset aging.
 

@@ -32,7 +32,7 @@ Every one of these needs only small additions to the note data (`labels`, `archi
 | 18 | **Insert timestamp** shortcut (e.g. `Ctrl+;` types `[14:32]`) to stamp points in a call | S |
 
 ## Kanban extras (not built)
-Per-column sort; auto-scroll while dragging a note to a column that is off-screen; testing the drag by touch.
+Per-column sort; dragging by touch (native drag-and-drop has no touch support in desktop Chromium).
 
 ## Left out on purpose
 Assignees, comments, watch, votes, stickers and Butler-style automation: they need other people or don't fit a single-user drop-down.

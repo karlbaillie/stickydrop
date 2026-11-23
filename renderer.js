@@ -54,7 +54,9 @@ function render(focusIdx) {
   closePop();
   const boardMode = settings.layout === 'board';
   board.classList.toggle('cols', boardMode);
+  const kept = new Map([...board.querySelectorAll('.col')].map((c) => [c.colData?.id, c.scrollTop])); // a drop or edit redraws: don't jump columns back to the top
   board.replaceChildren(...(boardMode ? columns.map(colEl) : notes.map((n) => noteEl(n, notes.indexOf(n)))), ...(boardMode && columns.length < 8 ? [addColBtn()] : []));
+  board.querySelectorAll('.col').forEach((c) => { if (kept.get(c.colData.id)) c.scrollTop = kept.get(c.colData.id); });
   if (focusIdx != null) focusNote(focusIdx);
 }
 
@@ -217,7 +219,7 @@ const clearDrop = () => board.querySelectorAll(DROP_CLASSES.map((c) => '.' + c).
 // buttons and a column's rename input can still select text. `drag` is the one drag in flight; anything else dragged
 // over the board (files, text from other apps) is left alone. The drop target is found by hit-testing the pointer.
 // kind 'note': item is a note, dropped in a column (board) or between notes (row); kind 'col': item is a column, dropped beside another.
-let drag = null; // { kind, item, src, drop: what releasing here does, or null }
+let drag = null; // { kind, item, src, drop: what releasing here does (or null), at: last pointer position over the board }
 const DRAG_TYPE = 'application/x-stickydrop'; // a private type: textareas and other apps don't accept it
 function makeDraggable(head, src, item, kind) {
   head.onpointerdown = (e) => { head.draggable = !e.target.closest('input, button:not(.col-name)'); }; // a column's name can start a drag; a plain click still renames
@@ -232,6 +234,8 @@ function makeDraggable(head, src, item, kind) {
   head.ondragend = endDrag;
 }
 function endDrag() {
+  cancelAnimationFrame(scrollTick);
+  scrollTick = 0;
   drag?.src.classList.remove('dragging');
   drag = null;
   clearDrop();
@@ -262,13 +266,45 @@ function aim(x, y) {
     drag.drop = () => moveNote(item, c.id, before?.note);
   }
 }
+// Auto-scroll while dragging near an edge: the board sideways (an off-screen column or note), the column under the pointer
+// up and down. Faster the closer to the edge; it keeps going while the pointer rests there, and the drop marker follows.
+const EDGE = 60, MAX_SPEED = 900; // px zone, px per second (by time, not per frame: 120 Hz displays would double it)
+let scrollTick = 0, lastTick = 0;
+const edgeSpeed = (p, lo, hi, dt) => { // signed px to scroll this frame, at least 1 inside the zone
+  const zone = Math.min(EDGE, (hi - lo) / 3); // small areas keep a usable middle
+  const depth = p < lo + zone ? -(lo + zone - p) : p > hi - zone ? p - (hi - zone) : 0;
+  return Math.sign(depth) * Math.ceil(MAX_SPEED * dt * Math.min(1, Math.abs(depth) / zone));
+};
+function autoScroll(now) {
+  scrollTick = 0;
+  const dt = Math.min(now - lastTick, 50) / 1000; // a long gap (first frame, a stall) doesn't jump
+  lastTick = now;
+  if (!drag?.at) return;
+  const { x, y } = drag.at;
+  let moved = false;
+  const nudge = (box, axis, delta) => {
+    if (!delta) return;
+    const before = box[axis];
+    box[axis] += delta;
+    moved ||= box[axis] !== before;
+  };
+  const b = board.getBoundingClientRect();
+  nudge(board, 'scrollLeft', edgeSpeed(x, b.left, b.right, dt));
+  const col = drag.kind === 'note' && document.elementFromPoint(x, y)?.closest('.col');
+  if (col) { const r = col.getBoundingClientRect(); nudge(col, 'scrollTop', edgeSpeed(y, r.top, r.bottom, dt)); }
+  if (!moved) return; // at the end (or out of the zone): wait for the next dragover
+  aim(x, y);
+  scrollTick = requestAnimationFrame(autoScroll);
+}
 board.addEventListener('dragover', (e) => {
   if (!drag) return;
   e.preventDefault(); // accept the drop
   e.dataTransfer.dropEffect = 'move';
+  drag.at = { x: e.clientX, y: e.clientY };
   aim(e.clientX, e.clientY);
+  if (!scrollTick) { lastTick = performance.now(); scrollTick = requestAnimationFrame(autoScroll); }
 });
-board.addEventListener('dragleave', (e) => { if (drag && !board.contains(e.relatedTarget)) { clearDrop(); drag.drop = null; } });
+board.addEventListener('dragleave', (e) => { if (drag && !board.contains(e.relatedTarget)) { clearDrop(); drag.drop = null; drag.at = null; } });
 board.addEventListener('drop', (e) => {
   if (!drag) return;
   e.preventDefault(); // never let a textarea insert anything
