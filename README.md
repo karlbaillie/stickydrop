@@ -40,6 +40,7 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 - **Markdown**: notes render when you aren't editing them, and clicking one brings the text back.
   Headings, **bold**, *italic*, ~~strikethrough~~, `inline code` and fenced code blocks, nested and numbered lists,
   quotes, rules, links (open in your browser). Task lists (`- [ ]`) render as checkboxes you can tick without entering edit mode.
+- **Drag to rearrange**: press and hold any empty part of a note's header (the ⠿ grip marks it; the header shades and the cursor becomes a hand when you're in the right place) and drag. Works in the row and the board layout; `Alt+←/→` does the same from the keyboard.
 - Delete has a 6-second **undo**; there is always at least one note.
 
 **Due dates and done**
@@ -51,7 +52,7 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 **Kanban board (optional)**
 - Settings → Notes → **Layout: Kanban board** turns the row of notes into columns. It is the same notes, so you can switch back and forth freely; the default stays a plain row.
 - Starts with *To do / Doing / Done*. Click a column name to rename it, **+ Column** adds one (up to 8), **×** deletes one (its notes move to the first column), **+** adds a note to that column.
-- Drag a note by its header to move it between or within columns, or use `Alt+←/→` (change column) and `Alt+↑/↓` (reorder) on the focused note.
+- Drag a note by its header (any empty part of it) to move it between or within columns, or use `Alt+←/→` (change column) and `Alt+↑/↓` (reorder) on the focused note.
 - Each column's **⋮** menu sets a colour, an optional note limit (a soft warning: the count turns red, nothing is blocked) and delete. **▾** collapses a column to a thin strip. Drag a column header to reorder columns.
 - Moving a note into the done column marks it done, moving it out clears that; the ✓ button does the same move. Moving is not an edit, so it doesn't reset aging.
 
@@ -120,7 +121,7 @@ Notes:
 | `Ctrl/Cmd+N` | New note |
 | `Ctrl/Cmd+,` | Settings |
 | `Esc` | Close the due popover or settings if open, otherwise hide the window |
-| `Alt+←/→` / `Alt+↑/↓` | Board layout: move the focused note to another column / reorder it |
+| `Alt+←/→` / `Alt+↑/↓` | Move the focused note: row layout, earlier / later; board layout, to another column / up or down |
 | `Tab` | Move between notes and their controls |
 | Click a rendered note | Edit it; it re-renders when focus leaves |
 
@@ -213,7 +214,7 @@ Starting the command also launches the app if it isn't running, so the shortcut 
 |---|---|
 | Ubuntu 24.04+ on GNOME/Wayland (via XWayland) | **Developed and tested here**: end-to-end suite, packaging (`.deb`, AppImage), hotkey via `--toggle` |
 | Linux on an X11 session | Expected to work, including the built-in global hotkey; not tested |
-| macOS | **Untested.** Uses only cross-platform Electron APIs (full-screen overlay level, dock hidden, `Ctrl+Alt+N`) |
+| macOS 26 (Apple Silicon) | **Partly tested**: notes, Kanban and row drag-and-drop with Stay on top, by hand. Full-screen apps and the e2e suite on CI are not |
 | Windows | **Untested.** Same caveat |
 
 ## Development

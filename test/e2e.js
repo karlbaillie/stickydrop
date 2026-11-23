@@ -375,17 +375,17 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.equal(saved[2].color, 3); // swatch 0 is "no colour"
   assert.equal(saved[0].limit, 1);
 
-  // a slow, real-mouse-style drag: ghost follows, Esc cancels without hiding the window; releasing elsewhere moves the note
+  // a slow, real-mouse-style drag: a drop marker follows, Esc cancels without hiding the window; releasing elsewhere moves the note
   const hb = await page.locator('.col').nth(0).locator('.note').first().locator('.note-head').boundingBox();
   const tb = await page.locator('.col').nth(1).boundingBox();
   await page.mouse.move(hb.x + hb.width / 2, hb.y + 8);
   await page.mouse.down();
   await page.mouse.move(hb.x + hb.width / 2 + 40, hb.y + 40, { steps: 5 });
   await page.mouse.move(tb.x + tb.width / 2, tb.y + 120, { steps: 10 });
-  assert.equal(await page.locator('.ghost').count(), 1, 'a ghost follows the pointer');
+  assert.equal(await page.locator('.col').nth(1).and(page.locator('.drop-end')).count(), 1, 'the target column shows where the note will land');
   await page.keyboard.press('Escape');
   await page.mouse.up();
-  assert.equal(await page.locator('.ghost').count(), 0, 'Esc removes the ghost');
+  assert.equal(await page.locator('.drop-end, .drop-before').count(), 0, 'Esc clears the drop marker');
   assert(await visible(app), 'Esc cancels the drag without hiding the window');
   assert.deepEqual(await inCol(0), ['A', 'B'], 'a cancelled drag moves nothing');
   await page.mouse.move(hb.x + hb.width / 2, hb.y + 8);
@@ -402,6 +402,25 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.deepEqual(await colNames(), ['Backlog', 'Review', 'Done']);
   await setLayout('row');
   assert.deepEqual(await page.locator('textarea').evaluateAll((t) => t.map((x) => x.value)).then((v) => v.sort()), ['A', 'B', 'C']);
+
+  // row layout: the header's empty space is a handle (grab cursor, grip), dragging reorders, Alt+arrows too
+  const rowOrder = () => page.locator('#board > .note textarea').evaluateAll((t) => t.map((x) => x.value));
+  const o0 = await rowOrder();
+  const head0 = page.locator('#board > .note').first().locator('.note-head');
+  assert.equal(await head0.evaluate((h) => getComputedStyle(h).cursor), 'grab', 'the header shows a grab cursor');
+  assert.equal(await head0.locator('.note-grip').count(), 1, 'the header has a grip cue');
+  const rh = await head0.boundingBox();
+  const lastBox = await page.locator('#board > .note').last().boundingBox();
+  await page.mouse.move(rh.x + rh.width / 2, rh.y + rh.height / 2); // the grip in the middle of the header
+  await page.mouse.down();
+  await page.mouse.move(lastBox.x + lastBox.width - 10, lastBox.y + 60, { steps: 10 });
+  assert.equal(await page.locator('#board > .note.drop-after').count(), 1, 'a bar marks the drop spot after the last note');
+  await page.mouse.up();
+  assert.deepEqual(await rowOrder(), [o0[1], o0[2], o0[0]], 'dragging a note in the row reorders it');
+  await page.evaluate(() => focusNote(notes.length - 1));
+  await page.keyboard.press('Alt+ArrowLeft');
+  assert.deepEqual(await rowOrder(), [o0[1], o0[0], o0[2]], 'Alt+Left moves the focused note earlier in the row');
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.note').note.text), o0[0], 'and keeps it focused');
   await page.evaluate(() => apply({ layout: 'board' }));
   await page.evaluate(() => api.resetSettings());
   await page.waitForTimeout(500);

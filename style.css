@@ -51,11 +51,11 @@ input.col-name { font: inherit; font-weight: 600; width: 9em; }
 .col-head .count { font-size: 12px; color: var(--muted); }
 #board:not(.cols) > .note { max-width: var(--note-w, 420px); } /* a lone note stays note-sized instead of stretching across the screen */
 .col > .note { flex: none; min-height: 150px; min-width: 0; }
-#board.cols .note-head, .col-head { cursor: grab; touch-action: none; user-select: none; }
-.ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .85; margin: 0; box-shadow: 0 8px 24px #000a; }
 .note.dragging { opacity: .4; }
 .drop-before { box-shadow: 0 -4px 0 0 var(--accent), 0 2px 8px #0008; }
 .col.drop-end { box-shadow: inset 0 -4px 0 0 var(--accent); }
+#board:not(.cols) > .note.drop-before { box-shadow: -8px 0 0 -2px var(--accent), 0 2px 8px #0008; } /* row layout: a bar in the gap */
+#board:not(.cols) > .note.drop-after { box-shadow: 8px 0 0 -2px var(--accent), 0 2px 8px #0008; }
 /* column colour, note-limit warning, collapsed strip, column drag */
 .col.colored { border-top: 4px solid var(--col-accent); }
 .col.over-limit { outline: 2px solid #d32f2f88; }
@@ -83,7 +83,14 @@ body[data-aging="vintage"] .note::before { filter: sepia(calc(var(--age, 0) * .8
 body[data-aging="vintage"] .note::after { content: ''; position: absolute; right: 0; bottom: 0; z-index: 0; pointer-events: none;
   width: calc(var(--age, 0) * 34px); height: calc(var(--age, 0) * 34px); border-top-left-radius: 4px;
   background: linear-gradient(to top left, color-mix(in srgb, var(--bg) var(--pct), transparent) 50%, #0003 50%); }
-.note-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 0; }
+.note-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 2px; border-radius: 4px 4px 0 0; }
+/* the header's empty space is the drag handle: grab cursor, a grip that brightens, and a faint band while hovered */
+.note-head, .col-head { cursor: grab; touch-action: none; user-select: none; }
+.note-head .note-grip { flex: 1; align-self: stretch; display: flex; align-items: center; justify-content: center;
+  font-size: 15px; letter-spacing: 1px; color: #2b2b2b; opacity: .22; transition: opacity .12s; pointer-events: none; }
+.note-head:hover:not(:has(button:hover)) { background: #0000000f; }
+.note-head:hover:not(:has(button:hover)) .note-grip { opacity: .7; }
+.note.dragging .note-head .note-grip { opacity: .7; }
 .note-tools { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .note-tools button[aria-pressed="true"] { color: #1b7f3b; }
 .note-head .due { font-size: 12px; padding: 1px 9px; margin-left: 4px; border: 1px solid #0003; border-radius: 10px; color: #2b2b2bcc; }

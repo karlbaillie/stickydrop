@@ -105,8 +105,13 @@ function noteEl(n, i) {
     openPop.querySelector('input').focus();
   });
   tools.append(color, doneBtn, dueBtn);
-  head.append(tools, btn('×', 'Delete note', () => removeNote(n)));
-  if (settings.layout === 'board') head.onpointerdown = (e) => startDrag(e, el, n, 'note'); // the header is the handle, so text selection in the note still works
+  const grip = document.createElement('span'); // a visible cue that the header's empty space is a handle
+  grip.className = 'note-grip';
+  grip.textContent = '⠿';
+  grip.setAttribute('aria-hidden', 'true');
+  head.append(tools, grip, btn('×', 'Delete note', () => removeNote(n)));
+  head.title = 'Drag to move';
+  makeDraggable(head, el, n, 'note'); // any empty part of the header is the handle, so text selection in the note still works
 
   const foot = document.createElement('div');
   foot.className = 'foot';
@@ -205,66 +210,81 @@ setInterval(refreshAll, 30000); // due states and ages move with the clock
 
 // ---- kanban board ----------------------------------------------------------
 const saveCols = () => api.saveColumns(columns);
-const clearDrop = () => board.querySelectorAll('.drop-before, .drop-end, .drop-col-before, .drop-col-after').forEach((x) => x.classList.remove('drop-before', 'drop-end', 'drop-col-before', 'drop-col-after'));
+const DROP_CLASSES = ['drop-before', 'drop-after', 'drop-end', 'drop-col-before', 'drop-col-after'];
+const clearDrop = () => board.querySelectorAll(DROP_CLASSES.map((c) => '.' + c).join()).forEach((x) => x.classList.remove(...DROP_CLASSES));
 
-// Pointer-driven drag for mouse and touch (HTML5 drag-and-drop is unreliable in frameless Electron windows on macOS and
-// has no touch support). A ghost follows the pointer; the drop target is found by hit-testing under it. Esc cancels.
-// kind 'note': item is a note, dropped in a column; kind 'col': item is a column, dropped beside another.
-function startDrag(e, src, item, kind) {
-  if (e.button !== 0 || e.target.closest('input, button:not(.col-name)')) return; // a column's name can start a drag; a plain click still renames
-  const handle = e.currentTarget;
-  const r0 = src.getBoundingClientRect();
-  const x0 = e.clientX, y0 = e.clientY;
-  let ghost, drop; // drop: what releasing here does (null = nothing)
-  const aim = (x, y) => {
-    clearDrop();
-    drop = null;
-    const col = document.elementFromPoint(x, y)?.closest('.col');
-    if (!col) return;
-    const c = col.colData;
-    if (kind === 'col') {
-      if (c === item) return;
-      const right = x > col.getBoundingClientRect().left + col.offsetWidth / 2;
-      col.classList.add(right ? 'drop-col-after' : 'drop-col-before');
-      drop = () => { columns.splice(columns.indexOf(item), 1); columns.splice(columns.indexOf(c) + (right ? 1 : 0), 0, item); saveCols(); render(); };
-    } else {
-      const before = [...col.querySelectorAll('.note:not(.dragging)')].find((n) => { const r = n.getBoundingClientRect(); return y < r.top + r.height / 2; });
-      (before || col).classList.add(before ? 'drop-before' : 'drop-end');
-      drop = () => moveNote(item, c.id, before?.note);
-    }
+// Native HTML5 drag-and-drop. A header is draggable only when the press lands on its empty space, so its buttons stay
+// buttons and a column's rename input can still select text. `drag` is the one drag in flight; anything else dragged
+// over the board (files, text from other apps) is left alone. The drop target is found by hit-testing the pointer.
+// kind 'note': item is a note, dropped in a column (board) or between notes (row); kind 'col': item is a column, dropped beside another.
+let drag = null; // { kind, item, src, drop: what releasing here does, or null }
+const DRAG_TYPE = 'application/x-stickydrop'; // a private type: textareas and other apps don't accept it
+function makeDraggable(head, src, item, kind) {
+  head.onpointerdown = (e) => { head.draggable = !e.target.closest('input, button:not(.col-name)'); }; // a column's name can start a drag; a plain click still renames
+  head.ondragstart = (e) => {
+    drag = { kind, item, src, drop: null };
+    const r = src.getBoundingClientRect();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DRAG_TYPE, kind);
+    e.dataTransfer.setDragImage(src, e.clientX - r.left, e.clientY - r.top);
+    requestAnimationFrame(() => drag?.src.classList.add('dragging')); // after the drag image is taken
   };
-  const finish = (run) => {
-    document.removeEventListener('pointermove', onMove);
-    document.removeEventListener('pointerup', onUp);
-    document.removeEventListener('pointercancel', onCancel);
-    document.removeEventListener('keydown', onKey, true);
-    ghost?.remove();
-    src.classList.remove('dragging');
-    clearDrop();
-    if (run && ghost && drop) drop();
-  };
-  const onKey = (k) => { if (k.key === 'Escape') { k.stopPropagation(); k.preventDefault(); finish(false); } };
-  const onMove = (m) => {
-    if (m.pointerId !== e.pointerId) return;
-    if (!ghost) {
-      if (Math.hypot(m.clientX - x0, m.clientY - y0) < 6) return; // a click, not a drag
-      ghost = src.cloneNode(true);
-      ghost.classList.add('ghost');
-      ghost.style.width = r0.width + 'px';
-      ghost.style.height = r0.height + 'px';
-      document.body.append(ghost);
-      src.classList.add('dragging');
-      handle.setPointerCapture(e.pointerId); // only now, so a plain click still reaches the button under it
-    }
-    ghost.style.transform = `translate(${m.clientX - (x0 - r0.left)}px, ${m.clientY - (y0 - r0.top)}px)`;
-    aim(m.clientX, m.clientY);
-  };
-  const onUp = () => finish(true);
-  const onCancel = () => finish(false);
-  document.addEventListener('keydown', onKey, true);
-  document.addEventListener('pointermove', onMove); // on document, not the handle: the first move may already be far away
-  document.addEventListener('pointerup', onUp);
-  document.addEventListener('pointercancel', onCancel);
+  head.ondragend = endDrag;
+}
+function endDrag() {
+  drag?.src.classList.remove('dragging');
+  drag = null;
+  clearDrop();
+}
+function aim(x, y) {
+  clearDrop();
+  drag.drop = null;
+  const { kind, item } = drag;
+  if (kind === 'note' && !board.classList.contains('cols')) { // row layout: drop between notes, by horizontal position
+    const others = [...board.querySelectorAll(':scope > .note')].filter((n) => n.note !== item);
+    if (!others.length) return;
+    const before = others.find((n) => { const r = n.getBoundingClientRect(); return x < r.left + r.width / 2; });
+    (before || others.at(-1)).classList.add(before ? 'drop-before' : 'drop-after');
+    drag.drop = () => reorderNote(item, before?.note);
+    return;
+  }
+  const col = document.elementFromPoint(x, y)?.closest('.col');
+  if (!col) return;
+  const c = col.colData;
+  if (kind === 'col') {
+    if (c === item) return;
+    const right = x > col.getBoundingClientRect().left + col.offsetWidth / 2;
+    col.classList.add(right ? 'drop-col-after' : 'drop-col-before');
+    drag.drop = () => { columns.splice(columns.indexOf(item), 1); columns.splice(columns.indexOf(c) + (right ? 1 : 0), 0, item); saveCols(); render(); };
+  } else {
+    const before = [...col.querySelectorAll('.note')].find((n) => { if (n.note === item) return false; const r = n.getBoundingClientRect(); return y < r.top + r.height / 2; });
+    (before || col).classList.add(before ? 'drop-before' : 'drop-end');
+    drag.drop = () => moveNote(item, c.id, before?.note);
+  }
+}
+board.addEventListener('dragover', (e) => {
+  if (!drag) return;
+  e.preventDefault(); // accept the drop
+  e.dataTransfer.dropEffect = 'move';
+  aim(e.clientX, e.clientY);
+});
+board.addEventListener('dragleave', (e) => { if (drag && !board.contains(e.relatedTarget)) { clearDrop(); drag.drop = null; } });
+board.addEventListener('drop', (e) => {
+  if (!drag) return;
+  e.preventDefault(); // never let a textarea insert anything
+  const run = drag.drop;
+  endDrag(); // dragend may not reach the source once render() has replaced it
+  run?.();
+});
+
+// row layout: put n before note `before` (or at the end)
+function reorderNote(n, before, keepFocus) {
+  if (before === n) return;
+  notes.splice(notes.indexOf(n), 1);
+  const at = before ? notes.indexOf(before) : -1;
+  notes.splice(at < 0 ? notes.length : at, 0, n);
+  save();
+  render(keepFocus ? notes.indexOf(n) : undefined);
 }
 
 // put n in column colId before note `before` (or at the end of that column); the done column marks it done
@@ -373,7 +393,7 @@ function colEl(c) {
   paintCol(c, col);
 
   col.colData = c;
-  head.onpointerdown = (e) => startDrag(e, col, c, 'col'); // drag a column header to reorder columns
+  makeDraggable(head, col, c, 'col'); // drag a column header to reorder columns
   return col;
 }
 
@@ -538,6 +558,7 @@ $('grip').onpointerdown = (e) => {
   let h = h0, queued = false;
   grip.setPointerCapture(e.pointerId);
   grip.onpointermove = (m) => {
+    if (!(m.buttons & 1)) return; // a stray move (e.g. the window growing under a resting cursor) is not part of the drag
     h = h0 + sign * (m.screenY - y0);
     if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; api.resizeHeight(h, false); }); }
   };
@@ -564,10 +585,16 @@ document.addEventListener('keydown', (e) => {
     if (!$('settings').hidden) $('settings').hidden = true;
     else api.hide();
   } else if (mod && e.key === 'n') { e.preventDefault(); addNote(); }
-  else if (e.altKey && e.key.startsWith('Arrow') && settings.layout === 'board') { // move the focused note
+  else if (e.altKey && e.key.startsWith('Arrow')) { // move the focused note
     const n = document.activeElement.closest?.('.note')?.note;
     if (!n) return;
     e.preventDefault();
+    if (settings.layout !== 'board') { // row: Alt+Left/Up earlier, Alt+Right/Down later
+      const i = notes.indexOf(n), back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+      if (back && i > 0) reorderNote(n, notes[i - 1], true);
+      else if (!back && i < notes.length - 1) reorderNote(n, notes[i + 2], true);
+      return;
+    }
     const col = columns.indexOf(colOf(n));
     const mine = notes.filter((m) => colOf(m) === colOf(n));
     const pos = mine.indexOf(n);

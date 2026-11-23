@@ -217,8 +217,10 @@ function setTray(on) {
     tray = null;
   }
 }
-// 'screen-saver' level keeps it above full-screen apps on macOS
-const setOnTop = (on) => (on ? win.setAlwaysOnTop(true, 'screen-saver') : win.setAlwaysOnTop(false));
+// 'pop-up-menu' is the highest level at which macOS still delivers drag-and-drop events to the window: at 'screen-saver'
+// a drag starts but no dragover/drop ever arrives (tested on macOS 26 with every level). It is still above the menu bar
+// and Dock; full-screen apps are covered by setVisibleOnAllWorkspaces({ visibleOnFullScreen }).
+const setOnTop = (on) => (on ? win.setAlwaysOnTop(true, 'pop-up-menu') : win.setAlwaysOnTop(false));
 
 // side effects of a setting changing (the rest is pure CSS in the renderer)
 const APPLY = {
