@@ -131,7 +131,10 @@ whole desktop, with every other app's windows left out.)
 **Download:** grab the `.deb`, `.AppImage` (Linux), `.dmg` (macOS) or `.exe` (Windows) from the
 [Releases page](https://github.com/karlbaillie/stickydrop/releases). Builds are unsigned (see below). Snap Store: `sudo snap install stickydrop` once published (see [RELEASING.md](RELEASING.md)).
 
-**From source:** needs Node.js and npm (developed on Node 24). There are no runtime dependencies: Electron is bundled into the packaged app.
+**Requirements:** macOS 12 (Monterey) or later on Apple Silicon, Windows 10 or later, or a 64-bit Linux desktop
+(built on Electron 45).
+
+**From source:** needs Node.js 22.12 or later and npm (developed on Node 24). There are no runtime dependencies: Electron is bundled into the packaged app.
 
 ```bash
 npm install
