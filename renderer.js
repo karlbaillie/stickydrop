@@ -8,6 +8,7 @@ let columns = []; // the active tab's columns (the same array as tab.columns)
 let labels = []; // [{ id, name, color }], shared by all tabs
 let showing = 'notes'; // or 'archive': the active tab's archived notes
 const filter = { q: '', overdue: false, today: false, labels: new Set() }; // Ctrl/Cmd+F
+const X_IMAGE = /^image\/(png|jpeg|gif|webp)$/; // what can be pasted or dropped into a note
 const COL_COLORS = ['#e57373', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8']; // also label colours
 let settings = {};
 let meta = {}; // schema, palettes, fonts from main
@@ -198,8 +199,10 @@ function noteEl(n, i) {
   const draw = () => view.replaceChildren(renderMarkdown(n.text));
   draw();
   view.onfocus = () => { el.classList.add('editing'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); };
-  view.onmousedown = (e) => { if (e.target.closest('a, input')) e.preventDefault(); }; // don't start editing on link/checkbox
+  view.onmousedown = (e) => { if (e.target.closest('a, input, img.md-img')) e.preventDefault(); }; // don't start editing on link/checkbox/image
   view.onclick = (e) => {
+    const img = e.target.closest('img.md-img');
+    if (img?.dataset.attachment) return api.openAttachment(img.dataset.attachment); // a stored image opens in the system viewer
     const cb = e.target.closest('input[type=checkbox]');
     if (!cb) return;
     const lines = n.text.split('\n');
@@ -216,6 +219,62 @@ function noteEl(n, i) {
     el.classList.remove('editing');
   });
   if (!settings.markdown || !n.text.trim()) el.classList.add('editing');
+
+  // images: paste a screenshot or drop image files onto the note; they're stored with the notes and linked in the text
+  const insertImages = async (files) => {
+    const refs = [];
+    for (const f of files) {
+      const r = await api.saveAttachment(new Uint8Array(await f.arrayBuffer()), f.type);
+      if (r.error) { toast(r.error); continue; }
+      const alt = f.name && f.name !== 'image.png' ? f.name.replace(/\.[^.]+$/, '').replace(/[[\]]/g, '') : 'image';
+      refs.push(`![${alt}](attachment:${r.name})`);
+    }
+    if (!refs.length) return;
+    const add = refs.join('\n');
+    if (document.activeElement === ta) { // at the cursor, on its own line
+      const before = ta.value.slice(0, ta.selectionStart);
+      ta.setRangeText((before && !before.endsWith('\n') ? '\n' : '') + add + '\n', ta.selectionStart, ta.selectionEnd, 'end');
+    } else ta.value = ta.value.trimEnd() + (ta.value.trim() ? '\n\n' : '') + add;
+    n.text = ta.value;
+    touch(n);
+    save();
+    draw();
+    el.refresh();
+  };
+  const imagesIn = (dt) => [...(dt?.files || [])].filter((f) => X_IMAGE.test(f.type));
+  ta.onpaste = (e) => {
+    const imgs = imagesIn(e.clipboardData);
+    if (!imgs.length) return; // ordinary text paste
+    e.preventDefault();
+    insertImages(imgs);
+  };
+  el.addEventListener('dragover', (e) => { // files from outside (our own note drags are handled by the board)
+    if (drag || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    el.classList.add('drop-file');
+  });
+  el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop-file'); });
+  el.addEventListener('drop', (e) => {
+    if (drag || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    el.classList.remove('drop-file');
+    const imgs = imagesIn(e.dataTransfer);
+    if (imgs.length) insertImages(imgs); else toast('Only images (PNG, JPEG, GIF, WebP) can be dropped into a note.');
+  });
+
+  // right-click the header or the rendered note: copy / export, move to another tab, archive
+  const menu = async (e) => {
+    e.preventDefault();
+    const others = tabs.filter((t) => t !== tab).map((t) => ({ id: t.id, name: t.name }));
+    const action = await api.noteMenu({ text: n.text, due: n.due, repeat: n.repeat, labels: n.labels, done: n.done }, others);
+    if (action === 'archive') archiveNote(n);
+    else if (action === 'copied') toast('Copied as Markdown');
+    else if (action === 'exported') toast('Note exported');
+    else if (action?.startsWith('move:')) moveToTab(n, tabs.find((t) => t.id === action.slice(5)));
+  };
+  head.oncontextmenu = menu;
+  view.oncontextmenu = menu;
 
   el.append(head, chips, view, ta, foot);
   el.refresh();
@@ -796,10 +855,11 @@ function renderChrome() {
   $('fcount').textContent = filtering() ? `${visible().length} of ${total}` : '';
 }
 
-function toast(msg, onUndo) {
+function toast(msg, onUndo) { // a message, with Undo when there is something to undo
   clearTimeout(toastTimer);
   $('toast-msg').textContent = msg;
   $('toast').hidden = false;
+  $('undo').hidden = !onUndo;
   $('undo').onclick = () => { $('toast').hidden = true; onUndo(); };
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000);
 }
@@ -835,6 +895,73 @@ const el = (tag, props = {}, ...kids) => {
   e.append(...kids);
   return e;
 };
+
+// Settings → Data: sync folder, export, import. Results and problems show in a status line at the bottom.
+function dataSettings() {
+  const wrap = el('div', { id: 'data-set' });
+  const status = el('p', { className: 'section-hint data-status', role: 'status' });
+  const say = (msg) => { status.textContent = msg || ''; };
+  const redraw = () => $('data-set')?.replaceWith(dataSettings());
+  const row = (label, hint, ...controls) => el('div', { className: 'setting' },
+    el('div', { className: 'setting-text' }, el('span', { textContent: label }), ...(hint ? [el('small', { textContent: hint })] : [])),
+    el('div', { className: 'setting-control' }, ...controls));
+  const folder = el('div');
+  const use = async (dir, mode) => {
+    const r = await api.setSyncDir(dir, mode);
+    if (r.error) return say(r.error);
+    redraw();
+  };
+  api.dataInfo().then((info) => {
+    const where = !info.syncDir ? 'Notes are kept on this computer only'
+      : info.syncOk ? info.syncDir : `Not found: ${info.syncDir}. Using the copy on this computer until it's back (restart then)`;
+    const choose = btn(info.syncDir ? 'Change…' : 'Choose folder…', 'Pick a synced folder for your notes', async () => {
+      const r = await api.chooseSyncDir();
+      if (r.canceled) return;
+      if (r.theirs == null) return use(r.dir, 'mine'); // an empty folder: these notes go there
+      folder.replaceChildren(row(`That folder already has StickyDrop notes (${r.theirs})`,
+        'Use them here (a copy of yours stays on this computer), or replace them with yours',
+        btn('Use those notes', 'Switch to the notes in that folder', () => use(r.dir, 'theirs')),
+        btn('Replace with mine', 'Write your notes to that folder', () => use(r.dir, 'mine')),
+        btn('Cancel', 'Keep things as they are', redraw)));
+    });
+    const stop = btn('Stop syncing', 'Keep the notes on this computer only (they stay as they are now)', async () => { await api.stopSync(); redraw(); });
+    folder.replaceChildren(
+      row('Sync folder', where, choose, ...(info.syncDir ? [stop] : [])),
+      row('Data folder', info.dataDir, btn('Open', 'Show the folder with your notes and images', () => api.openDataFolder())));
+  });
+  const exportMd = btn('Export…', 'Choose a folder to export to', async () => {
+    const r = await api.exportMarkdown();
+    if (!r.canceled) say(`Exported ${r.files.length} file${r.files.length === 1 ? '' : 's'} to ${r.dir}`);
+  });
+  const backup = btn('Export…', 'Save a backup file', async () => {
+    const r = await api.exportBackup();
+    if (!r.canceled) say(`Backup saved to ${r.file}`);
+  });
+  const importMd = btn('Import…', 'Choose .md or .txt files', async () => {
+    const r = await api.importMarkdown();
+    if (r.canceled) return;
+    for (const f of r.files) notes.push({ ...newNote(), text: f.text });
+    if (r.files.length) { save(); render(); }
+    say(`Imported ${r.files.length} note${r.files.length === 1 ? '' : 's'} into "${tab.name}"` + (r.skipped.length ? `; skipped ${r.skipped.join(', ')} (unreadable or over 1 MB)` : ''));
+  });
+  const restore = armed(btn('Restore…', 'Two clicks: replaces your notes'), 'Restore…', async () => {
+    const r = await api.restoreBackup();
+    if (r.canceled) return;
+    say(r.error || `Restored ${r.notes} notes. Your previous notes are in ${r.safety}`);
+  });
+  wrap.append(
+    el('section', { className: 'settings-section' }, el('h3', { textContent: 'Sync' }),
+      el('p', { className: 'section-hint', textContent: 'Keep your notes in a folder that Dropbox, Syncthing, iCloud Drive or similar syncs, and choose the same folder on each computer. Notes, tabs, labels and images sync; settings stay per computer.' }),
+      folder),
+    el('section', { className: 'settings-section' }, el('h3', { textContent: 'Export' }),
+      row('Notes as Markdown', 'Every tab as a .md file, with its images', exportMd),
+      row('Backup', 'Everything in one JSON file, settings included', backup)),
+    el('section', { className: 'settings-section' }, el('h3', { textContent: 'Import' }),
+      row('Markdown or text files', 'Each file becomes a note in the current tab', importMd),
+      row('Restore a backup', 'Replaces all notes, tabs and labels with the backup\'s; yours are kept in a safety copy first. Settings stay.', restore)),
+    status);
+  return wrap;
+}
 
 // one settings row: label and hint on the left, the control on the right
 function settingRow(forId, label, hint, control, value) {
@@ -911,6 +1038,7 @@ async function openSettings() {
     ...Object.entries(groups).map(([name, sections]) => panel(name,
       ...Object.entries(sections).map(([sec, rows]) => el('section', { className: 'settings-section' }, el('h3', { textContent: sec }), ...rows)))),
     panel('Labels', labelSettings()),
+    panel('Data', dataSettings()),
   ];
   $('settings-body').replaceChildren(...panels);
   $('settings-nav').replaceChildren(...panels.map((p) => {
@@ -1043,23 +1171,49 @@ api.onFocusNote((id) => {
   switchTab(tabs.find((t) => t.id === n.tab) || tab, notes.indexOf(n));
 });
 
+// make loaded notes consistent with this version (at startup, after a restore, after another computer synced)
+function normalize() {
+  for (const n of notes) {
+    if (!tabs.some((t) => t.id === n.tab)) n.tab = tabs[0].id; // notes from before tabs belong to the first
+    if (n.labels) { n.labels = n.labels.filter(labelOf); if (!n.labels.length) delete n.labels; } // labels that no longer exist
+    if (n.archived != null && !Number.isFinite(n.archived)) delete n.archived;
+    if (n.repeat && !Time.REPEATS[n.repeat]) delete n.repeat;
+    if (typeof n.color !== 'number') n.color = Math.max(0, meta.palettes.classic.indexOf(n.color)); // old versions stored a hex colour
+    n.created ??= Date.now(); // notes from before dates existed start fresh
+    n.updated ??= n.created;
+  }
+}
+
+// the notes changed underneath us: another computer synced, or a backup was restored
+api.onDataChanged((d) => {
+  // the note being typed in keeps this computer's text, cursor and focus (its newest keystrokes may not be in d yet)
+  const ta = document.activeElement?.tagName === 'TEXTAREA' ? document.activeElement : null;
+  const mine = ta?.closest('.note')?.note;
+  const sel = ta && [ta.selectionStart, ta.selectionEnd];
+  ({ notes, tabs, labels } = d);
+  tab = tabs.find((t) => t.id === tab.id) || tabs.find((t) => t.id === d.activeTab) || tabs[0];
+  columns = tab.columns;
+  normalize();
+  for (const id of [...filter.labels]) if (!labelOf(id)) filter.labels.delete(id);
+  const kept = mine && notes.find((n) => n.id === mine.id);
+  if (kept && kept.text !== mine.text) { Object.assign(kept, { text: mine.text, updated: mine.updated }); save(); }
+  if (!notes.some(inTab)) switchTab(tab);
+  else if (kept && inTab(kept)) {
+    render(notes.indexOf(kept));
+    const t = document.activeElement;
+    if (t?.tagName === 'TEXTAREA') t.setSelectionRange(...sel);
+  } else render(lastFocus);
+  if (d.why) toast(d.why);
+  if (!$('settings').hidden && $('labels-set')) $('labels-set').replaceWith(labelSettings());
+});
+
 (async () => {
   const d = await api.load();
   ({ settings, notes, tabs, labels } = d);
   tab = tabs.find((t) => t.id === d.activeTab) || tabs[0];
   columns = tab.columns;
-  meta = d;
-  // notes from before tabs belong to the first; labels that no longer exist are dropped
-  for (const n of notes) {
-    if (!tabs.some((t) => t.id === n.tab)) n.tab = tabs[0].id;
-    if (n.labels) { n.labels = n.labels.filter(labelOf); if (!n.labels.length) delete n.labels; }
-    if (n.archived != null && !Number.isFinite(n.archived)) delete n.archived;
-    if (n.repeat && !Time.REPEATS[n.repeat]) delete n.repeat;
-  }
-  // older versions stored a hex colour; now an index into the chosen palette
-  const classic = d.palettes.classic;
-  for (const n of notes) if (typeof n.color !== 'number') n.color = Math.max(0, classic.indexOf(n.color));
-  for (const n of notes) { n.created ??= Date.now(); n.updated ??= n.created; } // notes from before dates existed start fresh
+  meta = d; // before normalize(): it needs the palettes
+  normalize();
   ensureOne();
   render(notes.findIndex(inTab));
   applyStyle();

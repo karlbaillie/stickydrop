@@ -216,7 +216,7 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   // the settings form is generated from the schema: a tab per group, one panel showing, every control present
   await page.keyboard.press('Control+,');
   await page.waitForSelector('#s-palette', { state: 'attached' });
-  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['General', 'Window', 'Appearance', 'Notes', 'Reminders', 'Labels']);
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['General', 'Window', 'Appearance', 'Notes', 'Reminders', 'Labels', 'Data']);
   assert.equal(await page.locator('.settings-panel:visible').count(), 1, 'one settings tab at a time');
   assert(await page.locator('#settings-body [id^="s-"]:not(output)').count() >= 26);
   assert.equal(await page.locator('#s-display option').count() >= 2, true);
@@ -633,6 +633,132 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   assert.equal(await page.evaluate(() => document.activeElement.closest('.note')?.note.id), 'rem', 'and focuses the note');
   await page.waitForTimeout(500);
   assert.equal(readData().reminded.rem, readData().notes.find((n) => n.id === 'rem').due, 'remembered, so it fires once');
+  await app.close();
+
+  // ---- content and data: images, export / import / restore, sync folder ----
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8Dwn4GBgYGJAQoAAP//AwB0AQL/1lRHmgAAAABJRU5ErkJggg==';
+  // the next native dialog returns this path (the main process's dialog functions are swapped for the test)
+  const nextDialog = (paths) => app.evaluate(({ dialog }, p) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: p });
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: p[0] });
+  }, paths);
+  fs.writeFileSync(dataFile, JSON.stringify({ version: 3, notes: [{ id: 'img', text: 'Screens', color: 0, created: 1, updated: 1 }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('textarea');
+
+  // #15 paste a screenshot: stored as a file, linked in the text, rendered via sdimg:, click opens it
+  await page.locator('.note textarea').first().focus();
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], 'image.png', { type: 'image/png' }));
+    document.querySelector('.note textarea').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, PNG);
+  await page.waitForFunction(() => notes[0].text.includes('attachment:'));
+  const imgName = await page.evaluate(() => /attachment:([\w-]+\.png)/.exec(notes[0].text)[1]);
+  assert.match(await page.evaluate(() => notes[0].text), /^Screens\n!\[image\]\(attachment:[\w-]+\.png\)\n$/, 'inserted at the cursor on its own line');
+  assert(fs.existsSync(path.join(dir, 'attachments', imgName)), 'the image is stored next to the notes');
+  await page.keyboard.press('Control+n'); // leave the note so it renders
+  const loaded = () => page.locator('.note').first().locator('img.md-img').evaluate((i) => i.complete && i.naturalWidth);
+  await page.waitForFunction(() => document.querySelector('img.md-img')?.complete);
+  assert.equal(await loaded(), 2, 'the stored image loads through the app\'s own protocol');
+  // dropping an image file onto a note adds it too; a non-image is refused
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], 'diagram.png', { type: 'image/png' }));
+    document.querySelectorAll('.note')[1].dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, PNG);
+  await page.waitForFunction(() => notes[1].text.includes('attachment:'));
+  assert.match(await page.evaluate(() => notes[1].text), /^!\[diagram\]\(attachment:/, 'alt text from the file name');
+  // web images (https) render; other schemes stay text
+  await page.evaluate(() => { notes[1].text = '![web](https://example.com/a.png) ![bad](javascript:alert(1)) ![f](file:///etc/x.png)'; render(); });
+  const srcs = await page.locator('.note').nth(1).locator('img').evaluateAll((l) => l.map((i) => i.getAttribute('src')));
+  assert.deepEqual(srcs, ['https://example.com/a.png'], 'only https and stored images become images');
+  await page.evaluate(() => { notes.pop(); render(); save(); });
+
+  // #16 export every tab as Markdown, with images copied alongside
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'stickydrop-export-'));
+  await nextDialog([out]);
+  const ex = await page.evaluate(() => api.exportMarkdown());
+  assert.deepEqual(ex.files, ['Notes.md']);
+  assert.match(fs.readFileSync(path.join(out, 'Notes.md'), 'utf8'), new RegExp(`^# Notes\n\nScreens\n!\\[image\\]\\(attachments/${imgName}\\)`));
+  assert(fs.existsSync(path.join(out, 'attachments', imgName)), 'images are exported next to the Markdown');
+  // backup, then import Markdown files, then restore the backup (two clicks) and get the old notes back
+  const bak = path.join(out, 'backup.json');
+  await nextDialog([bak]);
+  await page.evaluate(() => api.exportBackup());
+  assert.equal(JSON.parse(fs.readFileSync(bak, 'utf8')).notes[0].text.startsWith('Screens'), true);
+  fs.writeFileSync(path.join(out, 'agenda.md'), '﻿# Agenda\r\n- one\r\n');
+  fs.writeFileSync(path.join(out, 'empty.txt'), '  \n');
+  await nextDialog([path.join(out, 'agenda.md'), path.join(out, 'empty.txt')]);
+  await page.keyboard.press('Control+,');
+  await page.getByRole('tab', { name: 'Data' }).click();
+  await page.locator('#data-set').getByRole('button', { name: 'Import…' }).click();
+  await page.waitForFunction(() => notes.some((n) => n.text === '# Agenda\n- one'));
+  assert.match(await page.locator('.data-status').textContent(), /Imported 1 note into "Notes"/, 'empty files are skipped');
+  await nextDialog([bak]);
+  const restoreBtn = page.locator('#data-set').getByRole('button', { name: 'Restore…' });
+  await restoreBtn.click();
+  assert.equal(await page.evaluate(() => notes.length), 2, 'the first click only arms Restore');
+  await page.locator('#data-set').getByRole('button', { name: 'Click again' }).click();
+  await page.waitForFunction(() => !notes.some((n) => n.text.startsWith('# Agenda')));
+  assert.match(await page.locator('.data-status').textContent(), /Restored 1 notes/);
+  assert(fs.readdirSync(dir).some((f) => f.startsWith('data.json.before-restore-')), 'a safety copy is kept');
+
+  // #17 sync folder: notes (not settings) go to the folder; a change made there shows up; restarts read from it
+  const sync = fs.mkdtempSync(path.join(os.tmpdir(), 'stickydrop-sync-'));
+  const shared = () => JSON.parse(fs.readFileSync(path.join(sync, 'data.json'), 'utf8'));
+  await nextDialog([sync]);
+  await page.locator('#data-set').getByRole('button', { name: 'Choose folder…' }).click();
+  await page.waitForFunction(() => document.querySelector('#data-set')?.textContent.includes('Stop syncing'));
+  assert.deepEqual(Object.keys(shared()).sort(), ['labels', 'notes', 'tabs', 'version'], 'settings stay on this computer');
+  assert.equal(shared().notes[0].text.split('\n')[0], 'Screens');
+  assert(fs.existsSync(path.join(sync, 'attachments', imgName)), 'images move to the sync folder');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('img.md-img')?.complete);
+  assert.equal(await loaded(), 2, 'and still load from there');
+  const other = shared(); // "another computer" adds a note
+  other.notes.push({ id: 'remote', text: 'From the laptop', color: 2, tab: other.tabs[0].id, created: 1, updated: 1 });
+  fs.writeFileSync(path.join(sync, 'data.json'), JSON.stringify(other));
+  await page.waitForFunction(() => notes.some((n) => n.id === 'remote'), null, { timeout: 5000 });
+  assert.match(await page.locator('#toast-msg').textContent(), /another computer/);
+  assert(await page.locator('#undo').isHidden(), 'nothing to undo');
+  await page.locator('.note').first().locator('textarea:visible, .view:visible').click(); // edit mode or rendered, whichever shows
+  await page.keyboard.press('End');
+  await page.keyboard.type('!');
+  await page.waitForTimeout(600);
+  assert.equal(shared().notes[0].text.endsWith('!'), true, 'local edits are written to the folder');
+  // a sync arriving while typing: an older copy of the note being edited doesn't win, and focus/cursor stay put
+  await page.keyboard.type('?');
+  const stale = shared();
+  stale.notes[0].text = stale.notes[0].text.replace(/!$/, '');
+  stale.notes.push({ id: 'remote2', text: 'Another', color: 1, tab: stale.tabs[0].id, created: 1, updated: 1 });
+  fs.writeFileSync(path.join(sync, 'data.json'), JSON.stringify(stale));
+  await page.waitForFunction(() => notes.some((n) => n.id === 'remote2'), null, { timeout: 5000 });
+  assert.match(await page.evaluate(() => notes[0].text), /!\?$/, 'the note being typed in keeps this computer\'s text');
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.note')?.note === notes[0] && document.activeElement.selectionStart === notes[0].text.length), true, 'still typing at the same place');
+  await page.keyboard.type('.');
+  await page.waitForTimeout(600);
+  assert.match(shared().notes[0].text, /!\?\.$/, 'and that version is what syncs');
+  await app.close();
+  assert.equal(readData().syncDir, sync, 'the folder is remembered (locally)');
+  fs.writeFileSync(path.join(sync, 'data.json'), JSON.stringify({ ...shared(), notes: [...shared().notes, { id: 'later', text: 'Synced while closed', color: 0 }] }));
+  app = await launch(); page = await app.firstWindow(); await page.waitForSelector('.note');
+  assert(await page.evaluate(() => notes.some((n) => n.id === 'later')), 'startup reads the folder');
+  // a second folder that already has notes: the user chooses whose to keep
+  const sync2 = fs.mkdtempSync(path.join(os.tmpdir(), 'stickydrop-sync-'));
+  fs.writeFileSync(path.join(sync2, 'data.json'), JSON.stringify({ notes: [{ id: 'z', text: 'Theirs', color: 0 }], tabs: [{ id: 'main', name: 'Notes' }] }));
+  await nextDialog([sync2]);
+  await page.keyboard.press('Control+,');
+  await page.getByRole('tab', { name: 'Data' }).click();
+  await page.locator('#data-set').getByRole('button', { name: 'Change…' }).click();
+  await page.locator('#data-set').getByRole('button', { name: 'Use those notes' }).click();
+  await page.waitForFunction(() => notes.length === 1 && notes[0].text === 'Theirs');
+  await page.locator('#data-set').getByRole('button', { name: 'Stop syncing' }).click();
+  await page.waitForFunction(() => document.querySelector('#data-set')?.textContent.includes('this computer only'));
+  await page.waitForTimeout(500);
+  assert.equal(readData().syncDir, undefined);
+  assert.equal(readData().notes[0].text, 'Theirs', 'stopping keeps the notes here');
   await app.close();
 
   // ---- auto-scroll while dragging near an edge ----

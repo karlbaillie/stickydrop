@@ -140,6 +140,9 @@ body.no-foot .foot { display: none; }
 .view blockquote { padding-left: .8em; border-left: 3px solid #0004; }
 .view hr { border: 0; border-top: 1px solid #0004; }
 .view a { color: #1a5fb4; }
+.view img.md-img { display: block; max-width: 100%; max-height: 260px; margin: .3em 0; border-radius: 4px; box-shadow: 0 1px 4px #0004; }
+.view img.md-img[data-attachment] { cursor: zoom-in; }
+.note.drop-file { box-shadow: 0 0 0 3px var(--accent), 0 2px 8px #0008; }
 .note:focus-within { box-shadow: 0 0 0 2px var(--accent), 0 2px 8px #0008; }
 
 #toast { z-index: 10; position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--panel);
@@ -174,6 +177,8 @@ body.no-foot .foot { display: none; }
 .setting-control input[type=range] { width: 170px; accent-color: var(--accent); }
 .setting-control output { min-width: 4.2em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 #settings-err { margin: 0; min-height: 1em; color: #ff8a80; font-size: 12px; }
+.data-status { margin-top: 12px; overflow-wrap: anywhere; }
+#data-set .setting-text small { overflow-wrap: anywhere; }
 /* on/off switches instead of bare checkboxes */
 input.switch { appearance: none; -webkit-appearance: none; flex: none; width: 36px; height: 20px; margin: 0; border-radius: 10px;
   background: var(--border); position: relative; cursor: pointer; transition: background .15s; }

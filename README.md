@@ -6,10 +6,9 @@ Press a key and a row of sticky notes drops from the top of your screen. Jot som
 (or just click back into your meeting) and it's gone, with no app switching and no lost context. Built for
 virtual meetings: quick notes, action items with due dates, and a scratchpad that is always one keypress away.
 
-![StickyDrop dropped down over the desktop: four notes with Markdown, due-date badges and an aged note](docs/hero.png)
+![Pressing the hotkey: a row of sticky notes slides down from the top of the screen over the desktop, then hides again](docs/drop.gif)
 
-*Dark theme, Classic palette. From the left: a note with an overdue badge and ticked tasks, one due today,
-one that has sat untouched for two weeks (faded), and one being edited (raw Markdown).*
+*One keypress drops your notes over whatever you're doing; another (or `Esc`, or clicking away) puts them away.*
 
 ## Contents
 - [Features](#features)
@@ -75,33 +74,57 @@ one that has sat untouched for two weeks (faded), and one being edited (raw Mark
 - Each column's **⋮** menu sets a colour, an optional note limit (a soft warning: the count turns red, nothing is blocked) and delete. **▾** collapses a column to a thin strip. Drag a column header to reorder columns.
 - Moving a note into the done column marks it done, moving it out clears that; the ✓ button does the same move. Moving is not an edit, so it doesn't reset aging.
 
+**Images, export and sync**
+- **Images**: paste a screenshot (`Ctrl/Cmd+V` while editing) or drop image files onto a note. PNG, JPEG, GIF and WebP up
+  to 15 MB are stored next to your notes and linked in the text as `![name](attachment:…)`; click one to open it in your
+  image viewer. Markdown image links to `https://` web images show too. Images no note uses any more are cleaned up
+  after a week.
+- **Right-click a note** (its header or rendered text): *Copy as Markdown*, *Export as Markdown file…*, *Move to tab*,
+  *Archive*.
+- **Settings → Data**:
+  - *Export*: every tab as a Markdown file (board tabs grouped by column, archived notes at the end, images copied
+    alongside), or a full JSON backup.
+  - *Import*: Markdown or text files (each becomes a note in the current tab), or *Restore a backup* (two clicks), which
+    replaces notes, tabs and labels and first saves the current ones as `data.json.before-restore-<time>`.
+  - *Sync folder*: keep your notes in a folder that Dropbox, Syncthing, iCloud Drive or similar syncs, and choose the
+    same folder on each computer. Notes, tabs, labels and images sync; settings, the active tab and reminders stay per
+    computer. Changes made on another computer show up within a second or two, merged note by note with yours: both
+    sides' changes are kept, and if the same note was edited on both, the newer edit wins. If the folder already holds
+    notes when you choose it, you pick whose to keep.
+
 **Aging**
 - Notes visually age with the time since their *last edit*: **Fade** (the paper washes out) or **Vintage**
   (it yellows and a corner curls). Editing a note, ticking a task or changing its due date rejuvenates it.
 - You choose how many days until fully aged (1–60). Overdue is a separate signal: its badge and edge never fade.
 - Every note shows "Created 3d ago · edited 2h ago" (exact times on hover); this can be turned off.
 
-**Customisation** (Settings, `Ctrl/Cmd+,`: tabs for General, Window, Appearance, Notes, Reminders and Labels)
+**Customisation** (Settings, `Ctrl/Cmd+,`: tabs for General, Window, Appearance, Notes, Reminders, Labels and Data)
 - Dark, light or follow-system theme; background opacity; four note palettes; four fonts and a size slider; hide the toolbar.
 - Window width, height, horizontal position and drop direction; which display; stay-on-top; tray icon; launch at login.
 - **Reset to defaults** (two clicks to confirm) restores every setting; notes, tabs and labels are kept.
 
 ## Screenshots
 
+![StickyDrop dropped down over the desktop: a row of notes with tabs, labels, a checklist, a pasted chart and due-date badges](docs/hero.jpg)
+
+*The "Product sync" tab (dark theme, 85% opacity, so the desktop shows through): a meeting note with a label,
+checklist progress and a due time, a pasted chart, a decision note that repeats weekly (↻), an overdue question with
+two labels, and an old idea fading with age. Four tabs along the toolbar; two notes in the archive.*
+
+![Kanban board tab with Backlog, In progress, Review and Done columns](docs/board.jpg)
+
+*The "Sprint board" tab as a Kanban board: coloured columns, soft note limits (Backlog is over its 3), checklist
+progress, due badges, labels and done cards. Each tab keeps its own layout.*
+
 | | |
 |---|---|
-| ![Light theme, Pastel palette, Vintage aging](docs/light.png) | ![Due date popover](docs/due.png) |
-| **Light theme, Pastel palette, Vintage aging.** The old note yellows and curls; the done note is struck through; overdue stays red. | **Due date popover**: quick picks plus an exact date and optional time. |
+| ![Light theme, Pastel palette, Vintage aging](docs/light.jpg) | ![Find bar filtering by the Decision label](docs/find.jpg) |
+| **Light theme, Pastel palette, Vintage aging** (the "Personal" tab). Old notes yellow and curl; overdue stays red. | **Find** (`Ctrl/Cmd+F`): text search and quick filters, here the *Decision* label (2 of 5 notes). |
+| ![Due date popover with quick picks, date, time and repeat](docs/due.jpg) | ![Settings, Appearance tab](docs/settings.jpg) |
+| **Due popover**: quick picks, an exact date and time, and **Repeat**. | **Settings**: General, Window, Appearance, Notes, Reminders, Labels and Data tabs. Changes apply live. |
 
-![Kanban board layout with To do, Doing and Done columns](docs/board.png)
-
-*Kanban board layout: coloured columns, here with a note limit of 1 exceeded in To do.*
-
-![Settings panel](docs/settings.png)
-
-*Settings: General, Window, Notes and Appearance groups. Changes apply live.*
-
-(Screenshots are regenerated from sample data with `node scripts/screenshots.js`.)
+(Screenshots and the animation are regenerated from sample data with `just screenshots`; on macOS they show the
+whole desktop, with every other app's windows left out.)
 
 ## Install and run
 
@@ -212,12 +235,18 @@ Starting the command also launches the app if it isn't running, so the shortcut 
 ## Your data and privacy
 
 - Everything is stored locally in one JSON file: `~/.config/stickydrop/data.json` (Linux),
-  `~/Library/Application Support/stickydrop/data.json` (macOS), `%APPDATA%\stickydrop\data.json` (Windows).
-  It is plain, unencrypted text, so back it up or sync it like any file.
+  `~/Library/Application Support/stickydrop/data.json` (macOS), `%APPDATA%\stickydrop\data.json` (Windows),
+  with images in an `attachments` folder beside it. It is plain, unencrypted text.
+- With a **sync folder** set, the notes part (notes, tabs, labels) and the images are written there as well, and that
+  folder's copy is what loads at startup; the local file keeps settings and a full copy of the notes. If the folder is
+  missing at startup the local copy is used and nothing is written to the folder until the next start.
+- **Settings → Data** exports Markdown or a JSON backup and restores backups (Open shows the data folder).
 - Writes are atomic (temp file, then rename). If the file ever can't be parsed, it is moved aside as
   `data.json.corrupt-<time>` and never overwritten.
-- No network access, accounts, telemetry or updates. Links in notes open only on click, only `http(s)`, in your browser.
-- The window runs with context isolation, no Node integration and a `default-src 'self'` content-security policy.
+- No accounts, telemetry or updates. The only network access is a web image you put in a note (`![…](https://…)`),
+  loaded without a referrer when the note shows. Links in notes open only on click, only `http(s)`, in your browser.
+- The window runs with context isolation, no Node integration and a content-security policy of `default-src 'self'`,
+  plus images from `https:` and the app's own `sdimg:` scheme (which serves only files from the attachments folder).
   The Markdown renderer builds elements from text and never uses `innerHTML`, so a pasted `<script>` or `<img onerror=…>`
   is shown as plain text.
 
@@ -227,6 +256,7 @@ Starting the command also launches the app if it isn't running, so the shortcut 
   "tabs": [{ "id": "main", "name": "Notes", "layout": "board",
     "columns": [{ "id": "todo", "name": "To do", "color": 4, "limit": 3 }, { "id": "done", "name": "Done", "done": true }] }],
   "activeTab": "main",
+  "syncDir": "/Users/me/Dropbox/StickyDrop",
   "labels": [{ "id": "q1w2e3r4", "name": "Action", "color": 0 }],
   "notes": [
     { "id": "k3j9x2ab", "text": "# Standup\n- [ ] send notes", "color": 0, "tab": "main", "col": "todo",
@@ -255,25 +285,28 @@ preload.js       the small, explicit bridge between window and main
 index.html       page shell · style.css: all styling, theming and aging effects
 renderer.js      notes UI, due popover, settings form (generated from the schema main sends)
 markdown.js      small safe Markdown → DOM renderer
-timeutil.js      pure date / due / age / tray-summary helpers (shared by main and renderer)
-test/            time.test.js (unit) · e2e.js (drives the real app with Playwright)
-scripts/         screenshots.js (regenerates docs/*.png)
-ROADMAP.md       ideas not built yet
+timeutil.js      pure date / due / age / tray-summary / checklist / recurrence / reminder helpers
+exporter.js      pure Markdown-export and attachment helpers (main)
+sync.js          pure three-way merge for the sync folder (main)
+test/            time.test.js, export.test.js, sync.test.js (unit) · e2e.js (drives the real app with Playwright)
+scripts/         screenshots.js (regenerates docs/: screenshots and drop.gif) · capture.swift (macOS screen capture)
 ```
 
 All tasks are `just` recipes (`just` lists them); CI runs the same ones.
 
 ```bash
 just test          # unit tests, then the end-to-end suite
-just screenshots   # refresh docs/*.png
+just screenshots   # refresh the README screenshots (macOS: full-desktop shots)
 just dist          # build installers for this OS
 ```
 
 - The end-to-end suite launches the real app against a temporary data directory (`STICKYDROP_DATA`), so it never
   touches your notes. It needs a display, and it needs `F9` to be free: **quit a running StickyDrop first.**
-- It covers notes, undo, Markdown rendering and checkbox toggling, link handling, due dates, done, aging modes,
-  timestamps, every settings group (including bad-value clamping and reset), window placement, `--toggle`,
-  refocus, persistence across restarts and corrupt-file recovery.
+- It covers notes, undo, Markdown and checkbox toggling, links and images (paste, drop, web), due dates, repeats,
+  reminders, done, aging, drag-and-drop and auto-scroll in both layouts, the Kanban board, tabs, labels, find, sort,
+  archive, every settings tab (including bad-value clamping, reset and the one-time default migrations), window
+  placement and resizing, `--toggle`, refocus, export / import / restore, the sync folder (including a change arriving
+  while you type), persistence across restarts and corrupt-file recovery.
 - Adding a setting is one entry in `SCHEMA` in `main.js`; the settings form, validation, defaults and reset pick it up.
 
 ## Known limitations
@@ -282,9 +315,10 @@ just dist          # build installers for this OS
   compositor honouring a transparent window; without one the background shows solid.
 - **Wayland**: the in-app global hotkey is unreliable; use the `--toggle` system shortcut (above).
 - **Touch screens**: dragging uses native drag-and-drop, which desktop Chromium doesn't support by touch; use `Alt+arrow` keys.
-- **Markdown** has no tables, images or raw HTML (HTML is shown as text).
-- **Reminders** only fire while StickyDrop is running, and a reminder more than a day late is skipped. No sync between machines yet; see [ROADMAP.md](ROADMAP.md).
-- Notes that predate the date features were treated as created and edited at first launch after the upgrade.
+- **Markdown** has no tables or raw HTML (HTML is shown as text).
+- **Reminders** only fire while StickyDrop is running, and a reminder more than a day late is skipped.
+- **Sync** merges whole notes, not lines: the same note edited on two computers keeps only the newer edit. Tabs and
+  labels changed on both computers at once keep this computer's version.
 
 ## License
 

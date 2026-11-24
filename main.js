@@ -1,9 +1,15 @@
-const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, screen, nativeImage, nativeTheme, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, screen, nativeImage, nativeTheme, shell, ipcMain,
+  dialog, clipboard, protocol, net } = require('electron');
+const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const Time = require('./timeutil');
+const X = require('./exporter');
+const Sync = require('./sync');
 
 if (process.env.STICKYDROP_DATA) app.setPath('userData', process.env.STICKYDROP_DATA); // tests
+// sdimg://a/NAME serves an attachment (a pasted or dropped image) from the notes' attachments folder
+protocol.registerSchemesAsPrivileged([{ scheme: 'sdimg', privileges: { standard: true, secure: true } }]);
 if (process.platform === 'linux') {
   // Wayland can't position/pin windows or grab global keys; XWayland can.
   app.commandLine.appendSwitch('ozone-platform', 'x11');
@@ -150,45 +156,144 @@ const cleanReminded = (r) => Object.fromEntries(Object.entries(r && typeof r ===
 // Saved files hold every setting, so a changed default only reaches existing installs through a one-time move here.
 // 2: theme follows the system, opacity 85%. 3: font size 14px.
 const VERSION = 3;
-let data = { version: VERSION, settings: { ...DEFAULTS }, notes: [], tabs: DEFAULT_TABS(), activeTab: 'main', labels: [], reminded: {} };
+let data = { version: VERSION, settings: { ...DEFAULTS }, notes: [], tabs: DEFAULT_TABS(), activeTab: 'main', labels: [], reminded: {} }; // + syncDir
 let win, tray, pinned = false, quitting = false, saveTimer, trayTimer;
+let modal = 0; // a native dialog or menu is open: losing focus to it must not hide the window
 const S = () => data.settings;
 
-function load() {
+// ---- storage -----------------------------------------------------------------
+// The local file (userData/data.json) always holds everything, settings included. With a sync folder set, the notes
+// (notes, tabs, labels) are also written to <folder>/data.json and read from there at startup, so they follow you
+// between computers; settings, the active tab and reminder history stay on each computer. If the folder is missing
+// (not mounted, not synced yet), the local copy is used and nothing is written there until the next start.
+const SHARED_KEYS = ['notes', 'tabs', 'labels'];
+const sharedFile = () => path.join(data.syncDir, 'data.json');
+let syncOk = false; // the sync folder is set and was there at startup
+let lastShared = ''; // the shared file's text as we last wrote or read it, so the watcher ignores our own writes
+const attachDir = () => path.join(syncOk ? data.syncDir : app.getPath('userData'), 'attachments');
+
+function readJson(file) { // null if missing; a file that won't parse is moved aside and never overwritten
   let raw;
-  try { raw = fs.readFileSync(FILE(), 'utf8'); } catch { return; } // first run
-  try {
-    const d = JSON.parse(raw);
-    const tabs = cleanTabs(d.tabs, d.columns);
-    data = {
-      version: VERSION,
-      settings: { ...DEFAULTS, ...d.settings },
-      notes: Array.isArray(d.notes) ? d.notes : [],
-      tabs,
-      activeTab: tabs.some((t) => t.id === d.activeTab) ? d.activeTab : tabs[0].id,
-      labels: cleanLabels(d.labels),
-      reminded: cleanReminded(d.reminded), // note id -> the due it was reminded for (main's own; the renderer never sends it)
-    };
-    for (const [k, spec] of Object.entries(SCHEMA)) { // drop stale/invalid saved values
-      if (k !== 'display' && coerce(spec, S()[k]) === undefined) S()[k] = spec.def;
-    }
-    const was = Number.isInteger(d.version) ? d.version : 1; // only values still on the old default move
-    if (was < 2 && S().theme === 'dark') S().theme = 'system';
-    if (was < 2 && S().opacity === 100) S().opacity = 85;
-    if (was < 3 && S().fontSize === 17) S().fontSize = 14;
-  } catch {
-    fs.renameSync(FILE(), FILE() + '.corrupt-' + Date.now()); // never overwrite unreadable notes
-  }
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  try { return { d: JSON.parse(raw), raw }; } catch { fs.renameSync(file, file + '.corrupt-' + Date.now()); return null; }
 }
+// the notes part of a file, cleaned
+const sharedPart = (d) => {
+  const tabs = cleanTabs(d.tabs, d.columns);
+  return { notes: Array.isArray(d.notes) ? d.notes : [], tabs, labels: cleanLabels(d.labels) };
+};
+
+function load() {
+  const local = readJson(FILE());
+  if (!local) return; // first run (or a corrupt file, moved aside)
+  const d = local.d;
+  data = {
+    version: VERSION,
+    settings: { ...DEFAULTS, ...d.settings },
+    ...sharedPart(d),
+    activeTab: d.activeTab,
+    reminded: cleanReminded(d.reminded), // note id -> the due it was reminded for (main's own; the renderer never sends it)
+  };
+  if (typeof d.syncDir === 'string' && path.isAbsolute(d.syncDir)) data.syncDir = d.syncDir;
+  for (const [k, spec] of Object.entries(SCHEMA)) { // drop stale/invalid saved values
+    if (k !== 'display' && coerce(spec, S()[k]) === undefined) S()[k] = spec.def;
+  }
+  const was = Number.isInteger(d.version) ? d.version : 1; // only values still on the old default move
+  if (was < 2 && S().theme === 'dark') S().theme = 'system';
+  if (was < 2 && S().opacity === 100) S().opacity = 85;
+  if (was < 3 && S().fontSize === 17) S().fontSize = 14;
+  if (data.syncDir) {
+    syncOk = fs.existsSync(data.syncDir);
+    const shared = syncOk && readJson(sharedFile());
+    if (shared) { Object.assign(data, sharedPart(shared.d)); lastShared = shared.raw; }
+  }
+  if (!data.tabs.some((t) => t.id === data.activeTab)) data.activeTab = data.tabs[0].id;
+}
+
+function writeAtomic(file, text) {
+  const tmp = file + '.tmp';
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, file); // atomic: a crash can't leave half a file
+}
+const sharedText = () => JSON.stringify({ version: VERSION, ...Object.fromEntries(SHARED_KEYS.map((k) => [k, data[k]])) }, null, 2);
+// Take in another computer's save (raw = the folder file's text): three-way merge against what we last wrote or read
+// there, so neither side's changes are lost. Returns true if this computer's notes changed.
+function absorb(raw) {
+  let d;
+  try { d = JSON.parse(raw); } catch { return false; } // half-synced: the next event brings the rest
+  let base = null;
+  try { if (lastShared) base = sharedPart(JSON.parse(lastShared)); } catch { /* none */ }
+  const local = Object.fromEntries(SHARED_KEYS.map((k) => [k, data[k]]));
+  const merged = Sync.merge(base, local, sharedPart(d));
+  lastShared = raw;
+  if (Sync.same(merged, local)) return false;
+  Object.assign(data, merged);
+  if (!data.tabs.some((t) => t.id === data.activeTab)) data.activeTab = data.tabs[0].id;
+  return true;
+}
+const tellRenderer = (why) => { win?.webContents.send('data-changed', { ...boardData(), why }); buildTray(); };
 
 function flush() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  const tmp = FILE() + '.tmp';
-  fs.mkdirSync(path.dirname(tmp), { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, FILE()); // atomic: a crash can't leave half a file
+  if (syncOk) { // the folder changed since we last looked (and the watcher hasn't caught up): merge before writing
+    let disk = null;
+    try { disk = fs.readFileSync(sharedFile(), 'utf8'); } catch { /* not there yet */ }
+    if (disk != null && disk !== lastShared && absorb(disk)) tellRenderer('Notes updated from another computer');
+  }
+  writeAtomic(FILE(), JSON.stringify(data, null, 2));
+  if (!syncOk) return;
+  const text = sharedText();
+  if (text === lastShared) return;
+  try { // same notes in a different form (another app version wrote it): leave it, or two computers rewrite forever
+    if (lastShared && Sync.same(sharedPart(JSON.parse(lastShared)), sharedPart(JSON.parse(text)))) return;
+  } catch { /* unreadable: write ours */ }
+  try { writeAtomic(sharedFile(), text); lastShared = text; } catch (e) { console.error('sync folder write failed:', e.message); }
 }
+
+// another computer changed the shared file (via Dropbox, Syncthing...): take its notes and redraw
+let watcher, watchTimer;
+function watchShared() {
+  watcher?.close();
+  watcher = null;
+  if (!syncOk) return;
+  try {
+    watcher = fs.watch(data.syncDir, (_ev, f) => {
+      if (f && f !== 'data.json') return;
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        let raw;
+        try { raw = fs.readFileSync(sharedFile(), 'utf8'); } catch { return; }
+        if (raw === lastShared) return; // our own write, or nothing new
+        if (absorb(raw)) tellRenderer('Notes updated from another computer');
+        flush(); // keep the local copy current, and write the merge back if it differs from what arrived
+      }, 400);
+    });
+  } catch (e) { console.error('cannot watch the sync folder:', e.message); }
+}
+const boardData = () => ({ notes: data.notes, tabs: data.tabs, activeTab: data.activeTab, labels: data.labels });
+
+// copy image files between folders (moving to/from a sync folder); existing files are left alone
+function copyAttachments(from, to) {
+  let names = [];
+  try { names = fs.readdirSync(from).filter((f) => X.NAME_RE.test(f)); } catch { return; }
+  fs.mkdirSync(to, { recursive: true });
+  for (const f of names) if (!fs.existsSync(path.join(to, f))) fs.copyFileSync(path.join(from, f), path.join(to, f));
+}
+// delete images no note refers to any more (archived notes count), once a week old: a synced folder may receive a
+// new image before the notes file that refers to it
+function collectAttachments() {
+  const used = new Set(data.notes.flatMap((n) => X.attachmentsIn(n.text)));
+  const dir = attachDir();
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const f of names) {
+    if (!X.NAME_RE.test(f) || used.has(f)) continue;
+    try { if (Date.now() - fs.statSync(path.join(dir, f)).mtimeMs > 7 * 864e5) fs.rmSync(path.join(dir, f)); } catch { /* gone already */ }
+  }
+}
+
 const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 300); };
 
 // ---- window ----------------------------------------------------------------
@@ -391,6 +496,168 @@ function applySettings(patch) {
   return { ok: !error, error, settings: S() };
 }
 ipcMain.handle('set-settings', (_e, patch) => applySettings(patch));
+
+// ---- images, export / import, sync folder ----------------------------------
+// While a native dialog or menu is up the window loses focus to it; that must not hide it.
+async function withModal(fn) {
+  modal++;
+  try { return await fn(); } finally { modal--; if (win.isVisible()) win.focus(); }
+}
+const today = () => Time.toDateStr(new Date());
+
+// a pasted or dropped image: stored in the attachments folder under a random name; the note refers to that name
+ipcMain.handle('save-attachment', (_e, bytes, type) => {
+  const ext = X.IMAGE_TYPES[type];
+  if (!ext || !(bytes instanceof Uint8Array || bytes instanceof ArrayBuffer)) return { error: 'Only PNG, JPEG, GIF and WebP images can be added.' };
+  const buf = Buffer.from(bytes);
+  if (buf.length > 15 * 2 ** 20) return { error: 'That image is over 15 MB.' };
+  const name = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  fs.mkdirSync(attachDir(), { recursive: true });
+  fs.writeFileSync(path.join(attachDir(), name), buf);
+  return { name };
+});
+ipcMain.on('open-attachment', (_e, name) => { if (X.NAME_RE.test(name)) shell.openPath(path.join(attachDir(), name)); });
+
+// copy a note's (or notes') images into <dir>/attachments next to an exported Markdown file
+function exportImages(notes, dir) {
+  const names = [...new Set(notes.flatMap((n) => X.attachmentsIn(n.text)))];
+  for (const f of names) {
+    const from = path.join(attachDir(), f);
+    if (!fs.existsSync(from)) continue;
+    fs.mkdirSync(path.join(dir, 'attachments'), { recursive: true });
+    fs.copyFileSync(from, path.join(dir, 'attachments', f));
+  }
+}
+const layoutOfTab = (t) => t.layout || S().layout;
+
+// every tab as its own Markdown file in a chosen folder
+ipcMain.handle('export-markdown', () => withModal(async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Export notes as Markdown', buttonLabel: 'Export here',
+    properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  const dir = r.filePaths[0];
+  const now = new Date();
+  const used = new Set();
+  const files = data.tabs.map((t) => {
+    let name = X.safeName(t.name, 'Notes');
+    while (used.has(name.toLowerCase())) name += ' (2)';
+    used.add(name.toLowerCase());
+    fs.writeFileSync(path.join(dir, name + '.md'), X.tabMarkdown(t, data.notes, data.labels, now, layoutOfTab(t)));
+    return name + '.md';
+  });
+  exportImages(data.notes, dir);
+  return { files, dir };
+}));
+// a full backup: everything in the data file, settings included
+ipcMain.handle('export-backup', () => withModal(async () => {
+  const r = await dialog.showSaveDialog(win, { title: 'Export a backup', defaultPath: `stickydrop-backup-${today()}.json`,
+    filters: [{ name: 'StickyDrop backup', extensions: ['json'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  fs.writeFileSync(r.filePath, JSON.stringify({ ...data, syncDir: undefined }, null, 2));
+  return { file: r.filePath };
+}));
+// Markdown or text files: returned to the renderer, which adds one note per file to the current tab
+ipcMain.handle('import-markdown', () => withModal(async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Import Markdown or text files', buttonLabel: 'Import',
+    properties: ['openFile', 'multiSelections'], filters: [{ name: 'Markdown or text', extensions: ['md', 'markdown', 'txt'] }] });
+  if (r.canceled) return { canceled: true };
+  const files = [], skipped = [];
+  for (const f of r.filePaths) {
+    try {
+      if (fs.statSync(f).size > 2 ** 20) { skipped.push(path.basename(f)); continue; } // 1 MB of text is plenty for a note
+      const text = fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+      if (text) files.push({ name: path.basename(f).replace(/\.[^.]+$/, ''), text });
+    } catch { skipped.push(path.basename(f)); }
+  }
+  return { files, skipped };
+}));
+// restore a backup: its notes, tabs and labels replace the current ones (settings stay); a safety copy is kept first
+ipcMain.handle('restore-backup', () => withModal(async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Restore a StickyDrop backup', buttonLabel: 'Restore',
+    properties: ['openFile'], filters: [{ name: 'StickyDrop backup', extensions: ['json'] }] });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  let d;
+  try { d = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8')); } catch { return { error: 'That file isn\'t a StickyDrop backup (it won\'t parse).' }; }
+  if (!d || !Array.isArray(d.notes)) return { error: 'That file isn\'t a StickyDrop backup (it has no notes).' };
+  flush(); // so there is a current file to keep
+  const safety = FILE() + '.before-restore-' + Date.now();
+  fs.copyFileSync(FILE(), safety);
+  Object.assign(data, sharedPart(d));
+  data.activeTab = data.tabs[0].id;
+  flush();
+  win.webContents.send('data-changed', { ...boardData(), why: `Restored ${data.notes.length} notes` });
+  buildTray();
+  return { notes: data.notes.length, safety };
+}));
+
+// sync folder: where the notes live so they follow you between computers
+const dataInfo = () => ({ syncDir: data.syncDir || null, syncOk, dataDir: syncOk ? data.syncDir : app.getPath('userData') });
+ipcMain.handle('data-info', dataInfo);
+ipcMain.on('open-data-folder', () => shell.openPath(dataInfo().dataDir));
+// step 1: pick a folder; if it already holds StickyDrop notes the renderer asks whose to keep
+ipcMain.handle('choose-sync-dir', () => withModal(async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Keep notes in a folder', buttonLabel: 'Use this folder',
+    message: 'Pick a folder that Dropbox, Syncthing, iCloud Drive or similar keeps in sync.', properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  const dir = r.filePaths[0];
+  let theirs = null;
+  try { const d = JSON.parse(fs.readFileSync(path.join(dir, 'data.json'), 'utf8')); if (Array.isArray(d.notes)) theirs = d.notes.filter((n) => !n.archived).length; } catch { /* none */ }
+  return { dir, theirs };
+}));
+// step 2: start using it. 'mine' writes these notes there; 'theirs' takes the notes already in the folder
+ipcMain.handle('set-sync-dir', (_e, dir, mode) => {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) return { error: 'That folder is not available.' };
+  const before = attachDir();
+  if (mode === 'theirs') {
+    const shared = readJson(path.join(dir, 'data.json'));
+    if (!shared) return { error: 'The notes in that folder can\'t be read.' };
+    Object.assign(data, sharedPart(shared.d));
+    if (!data.tabs.some((t) => t.id === data.activeTab)) data.activeTab = data.tabs[0].id;
+    lastShared = shared.raw;
+  } else lastShared = '';
+  data.syncDir = dir;
+  syncOk = true;
+  copyAttachments(before, attachDir()); // images go along
+  flush();
+  watchShared();
+  if (mode === 'theirs') win.webContents.send('data-changed', { ...boardData(), why: 'Now using the notes in the sync folder' });
+  buildTray();
+  return dataInfo();
+});
+// stop: the notes stay on this computer (the local copy is always current); images come back too
+ipcMain.handle('stop-sync', () => {
+  if (syncOk) copyAttachments(attachDir(), path.join(app.getPath('userData'), 'attachments'));
+  delete data.syncDir;
+  syncOk = false;
+  watchShared();
+  flush();
+  return dataInfo();
+});
+
+// right-click on a note: copy / export it, move it to another tab, archive it
+ipcMain.handle('note-menu', (_e, note, tabs) => withModal(async () => {
+  const action = await new Promise((resolve) => {
+    let picked = null;
+    const pick = (v) => () => { picked = v; };
+    const menu = Menu.buildFromTemplate([
+      { label: 'Copy as Markdown', click: () => { clipboard.writeText(X.noteMarkdown(note, data.labels, new Date(), attachDir())); picked = 'copied'; } },
+      { label: 'Export as Markdown file…', click: pick('export') },
+      { type: 'separator' },
+      tabs.length
+        ? { label: 'Move to tab', submenu: tabs.map((t) => ({ label: t.name, click: pick('move:' + t.id) })) }
+        : { label: 'Move to tab', enabled: false },
+      { label: 'Archive', click: pick('archive') },
+    ]);
+    menu.popup({ window: win, callback: () => setTimeout(() => resolve(picked), 0) }); // after the item's click handler
+  });
+  if (action !== 'export') return action;
+  const r = await dialog.showSaveDialog(win, { title: 'Export note', defaultPath: X.safeName(Time.noteTitle(note.text)) + '.md',
+    filters: [{ name: 'Markdown', extensions: ['md'] }] });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, X.noteMarkdown(note, data.labels, new Date()) + '\n');
+  exportImages([note], path.dirname(r.filePath));
+  return 'exported';
+}));
 ipcMain.handle('reset-settings', () => applySettings(DEFAULTS)); // notes are untouched
 
 // ---- lifecycle -------------------------------------------------------------
@@ -401,6 +668,13 @@ app.on('window-all-closed', () => {}); // live in the tray
 
 app.whenReady().then(() => {
   load();
+  protocol.handle('sdimg', (req) => {
+    const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+    if (!X.NAME_RE.test(name)) return new Response('', { status: 404 });
+    return net.fetch(pathToFileURL(path.join(attachDir(), name)).toString());
+  });
+  watchShared();
+  collectAttachments();
   if (process.platform === 'darwin') app.dock.hide();
 
   win = new BrowserWindow({
@@ -414,7 +688,7 @@ app.whenReady().then(() => {
   // Markdown links open in the real browser; the window itself never navigates
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
-  win.on('blur', () => { if (!pinned && S().hideOnBlur) win.hide(); });
+  win.on('blur', () => { if (!pinned && !modal && S().hideOnBlur) win.hide(); });
   win.on('close', (e) => { if (!quitting) { e.preventDefault(); win.hide(); } }); // Alt+F4 hides, tray quits
 
   if (!bind(S().hotkey)) {

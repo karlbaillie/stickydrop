@@ -15,6 +15,8 @@ start:
 # Unit tests only (no display needed)
 unit:
     node test/time.test.js
+    node test/export.test.js
+    node test/sync.test.js
 
 # Unit + end-to-end tests. Quit a running StickyDrop first (the suite needs F9 free).
 # On headless Linux (CI) it runs under a virtual display.

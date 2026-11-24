@@ -1,7 +1,7 @@
 // Tiny Markdown -> DOM renderer for notes. Nodes are built with textContent only (never innerHTML),
 // so note text can't inject markup or script. Covers what meeting notes need: headings, bold/italic/
-// strike, inline + fenced code, lists (nested, ordered, task checkboxes), quotes, rules, links.
-// Not covered: tables, images, raw HTML (shown as plain text).
+// strike, inline + fenced code, lists (nested, ordered, task checkboxes), quotes, rules, links, and images: stored ones
+// (![alt](attachment:NAME), pasted or dropped in) and web ones (https only). Not covered: tables, raw HTML (shown as text).
 (() => {
   const h = (tag, props, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -9,11 +9,11 @@
     return e;
   };
 
-  // groups: 1-2 code, 3/4 bold, 5 strike, 6/7 italic, 8-9 [text](url), 10 bare url
-  const INLINE = /(`+)(.+?)\1|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|(?<!\w)_(.+?)_(?!\w)|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)])/g;
+  // groups: 1-2 code, 3/4 bold, 5 strike, 6/7 italic, 8-9 ![alt](image), 10-11 [text](url), 12 bare url
+  const INLINE = /(`+)(.+?)\1|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|(?<!\w)_(.+?)_(?!\w)|!\[([^\]]*)\]\((attachment:[\w-]+\.(?:png|jpe?g|gif|webp)|https:\/\/[^\s)]+)\)|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)])/gi;
 
   function inline(text, parent) {
-    const re = new RegExp(INLINE.source, 'g'); // fresh state: this function recurses
+    const re = new RegExp(INLINE.source, INLINE.flags); // fresh state: this function recurses
     let last = 0, m;
     while ((m = re.exec(text))) {
       parent.append(text.slice(last, m.index));
@@ -23,8 +23,13 @@
       else if (m[3] !== undefined || m[4] !== undefined) wrap('strong', m[3] ?? m[4]);
       else if (m[5] !== undefined) wrap('del', m[5]);
       else if (m[6] !== undefined || m[7] !== undefined) wrap('em', m[6] ?? m[7]);
-      else if (m[9] !== undefined) parent.append(h('a', { href: m[9], target: '_blank', rel: 'noreferrer', textContent: m[8] }));
-      else parent.append(h('a', { href: m[10], target: '_blank', rel: 'noreferrer', textContent: m[10] }));
+      else if (m[9] !== undefined) { // an image: a stored one is served by the app (sdimg:), a web one loads over https
+        const stored = /^attachment:/i.test(m[9]);
+        const img = h('img', { src: stored ? 'sdimg://a/' + m[9].slice(11) : m[9], alt: m[8], loading: 'lazy', className: 'md-img', referrerPolicy: 'no-referrer' });
+        if (stored) img.dataset.attachment = m[9].slice(11);
+        parent.append(img);
+      } else if (m[11] !== undefined) parent.append(h('a', { href: m[11], target: '_blank', rel: 'noreferrer', textContent: m[10] }));
+      else parent.append(h('a', { href: m[12], target: '_blank', rel: 'noreferrer', textContent: m[12] }));
     }
     parent.append(text.slice(last));
   }

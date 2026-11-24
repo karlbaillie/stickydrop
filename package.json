@@ -4,7 +4,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
-    "test": "node test/time.test.js && node test/e2e.js",
+    "test": "node test/time.test.js && node test/export.test.js && node test/sync.test.js && node test/e2e.js",
     "dist": "electron-builder"
   },
   "devDependencies": {
@@ -24,6 +24,8 @@
       "index.html",
       "renderer.js",
       "markdown.js",
+      "exporter.js",
+      "sync.js",
       "timeutil.js",
       "style.css",
       "build/icon.png"
