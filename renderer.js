@@ -19,7 +19,8 @@ let viewKey; // what the notes were last drawn for: Markdown on/off + layout
 const uid = () => Math.random().toString(36).slice(2, 10);
 const save = () => api.saveNotes(notes);
 const layoutOf = () => tab?.layout || settings.layout; // a tab's own Row/Board choice, else the default from Settings
-const viewNow = () => settings.markdown + layoutOf();
+const viewNow = () => settings.markdown + layoutOf() + settings.webImages;
+const md = (text) => renderMarkdown(text, { webImages: settings.webImages }); // every note render goes through here
 const colOf = (n) => columns.find((c) => c.id === n.col) || columns[0];
 const colors = () => meta.palettes[settings.palette];
 const paint = (el, n) => { el.style.setProperty('--note-bg', `color-mix(in srgb, ${colors()[n.color % colors().length]} var(--pct), transparent)`); };
@@ -196,7 +197,7 @@ function noteEl(n, i) {
   view.className = 'view';
   view.tabIndex = 0;
   view.setAttribute('aria-label', `Note ${i + 1} (rendered, activate to edit)`);
-  const draw = () => view.replaceChildren(renderMarkdown(n.text));
+  const draw = () => view.replaceChildren(md(n.text));
   draw();
   view.onfocus = () => { el.classList.add('editing'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); };
   view.onmousedown = (e) => { if (e.target.closest('a, input, img.md-img')) e.preventDefault(); }; // don't start editing on link/checkbox/image
@@ -816,7 +817,7 @@ function renderArchive() {
   const gone = notes.filter((n) => n.tab === tab.id && n.archived).sort((a, b) => b.archived - a.archived);
   const now = new Date();
   const cards = gone.map((n) => el('section', { className: 'note archived-note' },
-    el('div', { className: 'view' }, renderMarkdown(n.text)),
+    el('div', { className: 'view' }, md(n.text)),
     el('div', { className: 'foot row' }, `Archived ${Time.ago(n.archived, now)}`, el('span', { className: 'spacer' }),
       btn('Restore', 'Put it back on the board', () => { delete n.archived; save(); render(); }),
       armed(btn('Delete', 'Delete for good'), 'Delete', () => { notes.splice(notes.indexOf(n), 1); save(); render(); }))));
@@ -963,6 +964,35 @@ function dataSettings() {
   return wrap;
 }
 
+// Settings → General → Updates: the version, a Check now button, and what to do about a new version
+function updateRow() {
+  const status = el('small');
+  const extra = el('span', { className: 'row' });
+  const show = (r) => {
+    status.textContent = {
+      unsupported: 'Updates are checked by installed builds (not when running from source)',
+      latest: `Up to date (version ${r.version})`,
+      downloading: `Version ${r.version} is downloading; it installs when you quit`,
+      ready: `Version ${r.version} is ready to install`,
+      available: `Version ${r.version} is available to download`,
+      error: r.error,
+    }[r.status] || '';
+    extra.replaceChildren(...(r.status === 'ready' ? [btn('Restart now', 'Install the update and restart', () => api.installUpdate())]
+      : r.status === 'available' ? [btn('Download…', 'Open the download page', () => api.openRelease())] : []));
+  };
+  const check = btn('Check now', 'Look for a new version now', async () => {
+    status.textContent = 'Checking…';
+    show(await api.checkUpdates());
+  });
+  api.updateInfo().then((i) => {
+    if (!i.supported) return show({ status: 'unsupported' });
+    if (i.version) return show({ status: i.ready ? 'ready' : i.installs ? 'downloading' : 'available', version: i.version });
+    status.textContent = `Version ${i.current}`;
+  });
+  return el('div', { className: 'setting' }, el('div', { className: 'setting-text' }, el('span', { textContent: 'Version' }), status),
+    el('div', { className: 'setting-control' }, extra, check));
+}
+
 // one settings row: label and hint on the left, the control on the right
 function settingRow(forId, label, hint, control, value) {
   const text = el('div', { className: 'setting-text' }, el('label', { htmlFor: forId, textContent: label }), ...(hint ? [el('small', { textContent: hint })] : []));
@@ -1029,6 +1059,7 @@ async function openSettings() {
   const groups = {}; // group -> section -> rows
   for (const [key, spec] of Object.entries(meta.schema)) ((groups[spec.group] ||= {})[spec.section] ||= []).push(control(key, spec));
   groups.General.Shortcut.unshift(hotkeyControl());
+  groups.General.Updates.push(updateRow());
   const panel = (name, ...kids) => {
     const p = el('div', { className: 'settings-panel', role: 'tabpanel', ariaLabel: name }, ...kids);
     p.dataset.tab = name;

@@ -12,6 +12,8 @@
   // groups: 1-2 code, 3/4 bold, 5 strike, 6/7 italic, 8-9 ![alt](image), 10-11 [text](url), 12 bare url
   const INLINE = /(`+)(.+?)\1|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|(?<!\w)_(.+?)_(?!\w)|!\[([^\]]*)\]\((attachment:[\w-]+\.(?:png|jpe?g|gif|webp)|https:\/\/[^\s)]+)\)|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)])/gi;
 
+  let opts = {}; // { webImages: false } shows web images as links (set per render call)
+
   function inline(text, parent) {
     const re = new RegExp(INLINE.source, INLINE.flags); // fresh state: this function recurses
     let last = 0, m;
@@ -23,7 +25,9 @@
       else if (m[3] !== undefined || m[4] !== undefined) wrap('strong', m[3] ?? m[4]);
       else if (m[5] !== undefined) wrap('del', m[5]);
       else if (m[6] !== undefined || m[7] !== undefined) wrap('em', m[6] ?? m[7]);
-      else if (m[9] !== undefined) { // an image: a stored one is served by the app (sdimg:), a web one loads over https
+      else if (m[9] !== undefined && !/^attachment:/i.test(m[9]) && opts.webImages === false) { // web images off: a link
+        parent.append(h('a', { href: m[9], target: '_blank', rel: 'noreferrer', textContent: m[8] || m[9], className: 'img-link', title: 'Web image (not loaded: Settings → Notes)' }));
+      } else if (m[9] !== undefined) { // an image: a stored one is served by the app (sdimg:), a web one loads over https
         const stored = /^attachment:/i.test(m[9]);
         const img = h('img', { src: stored ? 'sdimg://a/' + m[9].slice(11) : m[9], alt: m[8], loading: 'lazy', className: 'md-img', referrerPolicy: 'no-referrer' });
         if (stored) img.dataset.attachment = m[9].slice(11);
@@ -34,7 +38,8 @@
     parent.append(text.slice(last));
   }
 
-  window.renderMarkdown = (src) => {
+  window.renderMarkdown = (src, options = {}) => {
+    opts = options;
     const out = document.createDocumentFragment();
     const lines = src.replace(/\r\n?/g, '\n').split('\n');
     let para = [];

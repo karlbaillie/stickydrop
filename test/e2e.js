@@ -239,6 +239,10 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.keyboard.press('Control+,');
   assert(await page.locator('#labels-set').isVisible(), 'reopening shows the last settings tab');
   await page.getByRole('tab', { name: 'General' }).click();
+  assert(await page.locator('#s-autoUpdate').isChecked(), 'update checks are on by default');
+  await page.getByRole('button', { name: 'Check now' }).click();
+  await page.waitForFunction(() => document.querySelector('#settings-body').textContent.includes('installed builds'));
+  assert.deepEqual(await page.evaluate(() => api.checkUpdates()), { status: 'unsupported' }, 'running from source never checks');
 
   // settings stay usable in a short window: buttons visible, body scrolls if needed
   await set({ heightPct: 15 });
@@ -674,6 +678,12 @@ const visible = (app) => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAl
   await page.evaluate(() => { notes[1].text = '![web](https://example.com/a.png) ![bad](javascript:alert(1)) ![f](file:///etc/x.png)'; render(); });
   const srcs = await page.locator('.note').nth(1).locator('img').evaluateAll((l) => l.map((i) => i.getAttribute('src')));
   assert.deepEqual(srcs, ['https://example.com/a.png'], 'only https and stored images become images');
+  await page.evaluate(() => apply({ webImages: false })); // "Load web images" off
+  assert.equal(await page.locator('.note').nth(1).locator('img').count(), 0, 'web images off: none shown');
+  assert.equal(await page.locator('.note').nth(1).locator('a.img-link').first().getAttribute('href'), 'https://example.com/a.png', 'a link instead');
+  assert.equal(await loaded(), 2, 'stored images still show');
+  await page.evaluate(() => apply({ webImages: true }));
+  assert.equal(await page.locator('.note').nth(1).locator('img').count(), 1, 'and back on');
   await page.evaluate(() => { notes.pop(); render(); save(); });
 
   // #16 export every tab as Markdown, with images copied alongside

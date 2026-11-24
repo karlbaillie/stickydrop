@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, screen, nativeImage, nativeTheme, shell, ipcMain,
-  dialog, clipboard, protocol, net } = require('electron');
+  dialog, clipboard, protocol, net, session } = require('electron');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
@@ -49,6 +49,8 @@ const SCHEMA = {
   alwaysOnTop:   { group: 'General', section: 'Behaviour', label: 'Stay on top of other windows', type: 'check', def: true },
   showTray:      { group: 'General', section: 'Behaviour', label: 'Show tray icon', type: 'check', def: true },
   launchAtLogin: { group: 'General', section: 'Behaviour', label: 'Launch at login', type: 'check', def: false },
+  autoUpdate:    { group: 'General', section: 'Updates', label: 'Check for updates automatically', type: 'check', def: true,
+    hint: 'Asks GitHub a few times a day. Windows and the Linux AppImage update when you quit; elsewhere you get a download link' },
   // Window
   display:       { group: 'Window', section: 'Position', label: 'Show on', type: 'select', options: displayChoices, def: 'mouse' },
   valign:        { group: 'Window', section: 'Position', label: 'Drops from', type: 'select', options: { top: 'Top', bottom: 'Bottom' }, def: 'top' },
@@ -75,6 +77,8 @@ const SCHEMA = {
     hint: 'Row layout: the most a note stretches (never below the minimum)' },
   doneSink:      { group: 'Notes', section: 'Layout', label: 'Move done notes to the end', type: 'check', def: false, hint: 'Row layout' },
   markdown:      { group: 'Notes', section: 'Content', label: 'Render Markdown', type: 'check', def: true, hint: 'While a note isn\'t being edited' },
+  webImages:     { group: 'Notes', section: 'Content', label: 'Load web images', type: 'check', def: true,
+    hint: 'Images linked from the web (https). Off: they show as links and nothing is fetched' },
   showAge:       { group: 'Notes', section: 'Content', label: 'Show created and edited times', type: 'check', def: true },
   aging:         { group: 'Notes', section: 'Aging', label: 'Aging', type: 'select', options: { off: 'Off', fade: 'Fade (washes out)', vintage: 'Vintage (yellows, corner curls)' }, def: 'fade',
     hint: 'Notes change the longer they go unedited' },
@@ -374,6 +378,9 @@ function buildTray() {
     })),
     { type: 'separator' },
     { label: `Show / hide (${S().hotkey})`, click: toggle },
+    ...(update.ready ? [{ label: `Restart to update to ${update.version}`, click: () => updater.quitAndInstall() }]
+      : update.version ? [{ label: `Download StickyDrop ${update.version}…`, click: () => shell.openExternal(releaseUrl(update.version)) }]
+        : updater ? [{ label: 'Check for updates', click: () => checkForUpdates(true) }] : []),
     { label: 'Quit StickyDrop', click: () => app.quit() },
   ]));
 }
@@ -496,6 +503,61 @@ function applySettings(patch) {
   return { ok: !error, error, settings: S() };
 }
 ipcMain.handle('set-settings', (_e, patch) => applySettings(patch));
+
+// ---- updates ---------------------------------------------------------------
+// electron-updater reads the GitHub release's latest*.yml. Windows (NSIS) and the Linux AppImage download the new
+// version in the background and install it on quit. A Mac build that isn't signed with a Developer ID can't replace
+// itself (macOS refuses an update from a different signer), and a .deb needs a package manager, so those announce the
+// new version and link to its download page. Snap Store installs update themselves; runs from source don't check.
+const REPO_URL = 'https://github.com/karlbaillie/stickydrop';
+const releaseUrl = (v) => `${REPO_URL}/releases/tag/v${v}`;
+const canInstall = () => process.platform === 'win32' || !!process.env.APPIMAGE;
+let updater = null; // electron-updater's autoUpdater, in installed builds only
+const update = { version: null, ready: false, told: null }; // the newest version found, and whether it's downloaded
+function setupUpdates() {
+  if (!app.isPackaged || process.env.SNAP || (process.env.STICKYDROP_DATA && !process.env.STICKYDROP_TEST_UPDATES)) return;
+  try { ({ autoUpdater: updater } = require('electron-updater')); } catch { return; }
+  updater.autoDownload = canInstall();
+  updater.autoInstallOnAppQuit = true;
+  updater.logger = null;
+  updater.on('update-available', (i) => { update.version = i.version; if (!canInstall()) announce(); else buildTray(); });
+  updater.on('update-downloaded', (i) => { Object.assign(update, { version: i.version, ready: true }); announce(); });
+  updater.on('error', () => {}); // offline, private repo, rate-limited: the next check tries again
+  setTimeout(() => S().autoUpdate && checkForUpdates(false), 30e3);
+  setInterval(() => S().autoUpdate && checkForUpdates(false), 6 * 36e5);
+}
+// once per version: a notification, and the tray menu offers it
+function announce() {
+  buildTray();
+  if (update.told === update.version + update.ready || !Notification.isSupported()) return;
+  update.told = update.version + update.ready;
+  const n = update.ready
+    ? new Notification({ title: `StickyDrop ${update.version} is ready`, body: 'It installs when you quit. Click to restart now.' })
+    : new Notification({ title: `StickyDrop ${update.version} is available`, body: 'Click to open the download page.' });
+  shown.add(n);
+  n.on('click', () => (update.ready ? updater.quitAndInstall() : shell.openExternal(releaseUrl(update.version))));
+  n.on('close', () => shown.delete(n));
+  n.show();
+}
+// manual = from Settings or the tray: report the outcome, even "up to date"
+async function checkForUpdates(manual) {
+  if (!updater) return { status: 'unsupported' };
+  try {
+    const r = await updater.checkForUpdates();
+    const newer = r?.isUpdateAvailable ?? (r?.updateInfo?.version && r.updateInfo.version !== app.getVersion());
+    if (!newer) {
+      if (manual && Notification.isSupported()) new Notification({ title: 'StickyDrop is up to date', body: `Version ${app.getVersion()}` }).show();
+      return { status: 'latest', version: app.getVersion() };
+    }
+    return { status: update.ready ? 'ready' : canInstall() ? 'downloading' : 'available', version: r.updateInfo.version };
+  } catch (e) {
+    return { status: 'error', error: /404|Unable to find latest/i.test(e.message) ? 'No releases found (is the repository public?)' : 'Could not reach GitHub' };
+  }
+}
+ipcMain.handle('check-updates', () => checkForUpdates(true));
+ipcMain.handle('update-info', () => ({ current: app.getVersion(), supported: !!updater, installs: canInstall(), version: update.version, ready: update.ready }));
+ipcMain.on('open-release', () => update.version && shell.openExternal(releaseUrl(update.version)));
+ipcMain.on('install-update', () => update.ready && updater.quitAndInstall());
 
 // ---- images, export / import, sync folder ----------------------------------
 // While a native dialog or menu is up the window loses focus to it; that must not hide it.
@@ -675,6 +737,10 @@ app.whenReady().then(() => {
   });
   watchShared();
   collectAttachments();
+  // "Load web images" off: no image is fetched from the web, whatever a note contains
+  session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (d, cb) =>
+    cb({ cancel: d.resourceType === 'image' && !S().webImages }));
+  setupUpdates();
   if (process.platform === 'darwin') app.dock.hide();
 
   win = new BrowserWindow({

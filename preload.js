@@ -24,4 +24,8 @@ contextBridge.exposeInMainWorld('api', {
   chooseSyncDir: () => ipcRenderer.invoke('choose-sync-dir'),
   setSyncDir: (dir, mode) => ipcRenderer.invoke('set-sync-dir', dir, mode),
   stopSync: () => ipcRenderer.invoke('stop-sync'),
+  checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  updateInfo: () => ipcRenderer.invoke('update-info'),
+  openRelease: () => ipcRenderer.send('open-release'),
+  installUpdate: () => ipcRenderer.send('install-update'),
 });

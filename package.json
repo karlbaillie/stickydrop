@@ -33,6 +33,13 @@
     "directories": {
       "buildResources": "build"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "karlbaillie",
+        "repo": "stickydrop"
+      }
+    ],
     "linux": {
       "target": [
         "deb",
@@ -54,7 +61,8 @@
       "gatekeeperAssess": false
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "snap": {
       "summary": "Drop-down sticky notes for meetings",
@@ -74,5 +82,8 @@
   },
   "bugs": {
     "url": "https://github.com/karlbaillie/stickydrop/issues"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

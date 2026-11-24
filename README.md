@@ -77,7 +77,7 @@ virtual meetings: quick notes, action items with due dates, and a scratchpad tha
 **Images, export and sync**
 - **Images**: paste a screenshot (`Ctrl/Cmd+V` while editing) or drop image files onto a note. PNG, JPEG, GIF and WebP up
   to 15 MB are stored next to your notes and linked in the text as `![name](attachment:…)`; click one to open it in your
-  image viewer. Markdown image links to `https://` web images show too. Images no note uses any more are cleaned up
+  image viewer. Markdown image links to `https://` web images show too (Settings → Notes → Load web images turns that off). Images no note uses any more are cleaned up
   after a week.
 - **Right-click a note** (its header or rendered text): *Copy as Markdown*, *Export as Markdown file…*, *Move to tab*,
   *Archive*.
@@ -97,6 +97,13 @@ virtual meetings: quick notes, action items with due dates, and a scratchpad tha
   (it yellows and a corner curls). Editing a note, ticking a task or changing its due date rejuvenates it.
 - You choose how many days until fully aged (1–60). Overdue is a separate signal: its badge and edge never fade.
 - Every note shows "Created 3d ago · edited 2h ago" (exact times on hover); this can be turned off.
+
+**Updates**
+- StickyDrop checks GitHub for a new version a few times a day (Settings → General → Updates; **Check now** checks
+  straight away). On Windows and with the Linux AppImage the update downloads in the background and installs when you
+  quit (or restart from the notification or tray menu). On macOS and with the `.deb` you get a notification and a
+  download link: an app not signed with an Apple Developer ID can't replace itself. Snap Store installs update
+  through the store. Turn the automatic check off in Settings.
 
 **Customisation** (Settings, `Ctrl/Cmd+,`: tabs for General, Window, Appearance, Notes, Reminders, Labels and Data)
 - Dark, light or follow-system theme; background opacity; four note palettes; four fonts and a size slider; hide the toolbar.
@@ -134,7 +141,8 @@ whole desktop, with every other app's windows left out.)
 **Requirements:** macOS 12 (Monterey) or later on Apple Silicon, Windows 10 or later, or a 64-bit Linux desktop
 (built on Electron 45).
 
-**From source:** needs Node.js 22.12 or later and npm (developed on Node 24). There are no runtime dependencies: Electron is bundled into the packaged app.
+**From source:** needs Node.js 22.12 or later and npm (developed on Node 24). Electron is bundled into the packaged app;
+the only runtime dependency is `electron-updater`.
 
 ```bash
 npm install
@@ -193,6 +201,7 @@ stickydrop             # a second launch simply shows the window
 | General | Stay on top of other windows | on | |
 | General | Show tray icon | on | |
 | General | Launch at login | off | Linux: `~/.config/autostart`; macOS/Windows: login items |
+| General | Check for updates automatically | on | A few times a day, from GitHub; **Check now** beside it. See [Updates](#features) |
 | Window | Show on | Display under the mouse | Or primary display, or a specific one |
 | Window | Drops from | Top | Top or bottom |
 | Window | Horizontal position | Center | Left, center or right (when narrower than 100%) |
@@ -208,6 +217,7 @@ stickydrop             # a second launch simply shows the window
 | Notes | Maximum note width | 420 px | 260–800; the most a note stretches in the row layout (never below the minimum) |
 | Notes | Move done notes to the end | off | Row layout |
 | Notes | Render Markdown | on | Off = plain text boxes |
+| Notes | Load web images | on | Off: `![…](https://…)` images show as links and nothing is fetched (stored images still show) |
 | Notes | Show created and edited times | on | |
 | Notes | Aging / Fully aged after | Fade / 14 days | Off, Fade or Vintage; 1–60 days |
 | Reminders | Desktop reminders | on | Only for due dates with a time, while StickyDrop runs |
@@ -246,8 +256,10 @@ Starting the command also launches the app if it isn't running, so the shortcut 
 - **Settings → Data** exports Markdown or a JSON backup and restores backups (Open shows the data folder).
 - Writes are atomic (temp file, then rename). If the file ever can't be parsed, it is moved aside as
   `data.json.corrupt-<time>` and never overwritten.
-- No accounts, telemetry or updates. The only network access is a web image you put in a note (`![…](https://…)`),
-  loaded without a referrer when the note shows. Links in notes open only on click, only `http(s)`, in your browser.
+- No accounts or telemetry. Network access is limited to two things, each with a switch in Settings: the update check
+  (GitHub's release list, a few times a day; General → Updates) and web images you put in a note
+  (`![…](https://…)`, loaded without a referrer; Notes → Load web images, which also blocks them at the network level
+  when off). Links in notes open only on click, only `http(s)`, in your browser.
 - The window runs with context isolation, no Node integration and a content-security policy of `default-src 'self'`,
   plus images from `https:` and the app's own `sdimg:` scheme (which serves only files from the attachments folder).
   The Markdown renderer builds elements from text and never uses `innerHTML`, so a pasted `<script>` or `<img onerror=…>`

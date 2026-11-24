@@ -33,6 +33,8 @@ jobs:
             dist/*.snap
             dist/*.dmg
             dist/*.exe
+            dist/latest*.yml
+            dist/*.blockmap
   publish:
     needs: build
     runs-on: ubuntu-latest

@@ -6,6 +6,14 @@
 (`.exe`), and attaches them to a new GitHub Release. A version with a suffix (`just release 0.2.0-beta.1`) is published
 as a pre-release, so it never shows as "Latest".
 
+## Updates
+Every release also carries the update manifests (`latest.yml`, `latest-mac.yml`, `latest-linux.yml`) and `.blockmap`
+files; installed copies read them from the GitHub release (`publish` in `package.json`), so the repository must be
+public for update checks to work. Windows and the AppImage install updates themselves. macOS only announces them with
+a download link, because an ad-hoc-signed app can't replace itself (that needs a Developer ID, see Signing); the same
+goes for `.deb`. Asset names must not contain spaces (GitHub renames them, breaking the manifest's links), hence the
+Windows `artifactName`.
+
 ## Snap Store (Ubuntu Software)
 One-time setup, needs a free Ubuntu One account:
 1. `sudo snap install snapcraft --classic`, then `snapcraft login` and `snapcraft register stickydrop`
